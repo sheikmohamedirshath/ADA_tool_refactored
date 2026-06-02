@@ -1,0 +1,9 @@
+com\internalproject\ui\service\UrlProcessorService$1.class
+com\internalproject\ui\Application.class
+com\internalproject\ui\config\WebConfig$1.class
+com\internalproject\ui\config\WebConfig.class
+com\internalproject\ui\dto\ProcessResponse.class
+com\internalproject\ui\controller\CustomErrorController.class
+com\internalproject\ui\controller\ProcessController.class
+com\internalproject\ui\dto\ProcessRequest.class
+com\internalproject\ui\service\UrlProcessorService.class
