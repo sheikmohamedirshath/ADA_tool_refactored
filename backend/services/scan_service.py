@@ -72,11 +72,3 @@ def get_scan_status(job_id: str):
     return get_queue_service().get_job_status(job_id)
 
 
-def format_scan_result(scan_output: dict):
-    return {
-        "scan_url": scan_output.get("scan_url"),
-        "scan_result": scan_output.get("scan_result"),
-        "issues": scan_output.get("issues", []),
-        "metadata": scan_output.get("metadata", {}),
-        "created_at": scan_output.get("created_at"),
-    }

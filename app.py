@@ -13,6 +13,11 @@ import json
 import logging
 import os
 import threading
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
 import time
 import uuid
 from pathlib import Path
@@ -358,10 +363,12 @@ def api_crawl_create():
     url = (data.get("url") or "").strip()
     if not url:
         return jsonify({"ok": False, "error": "Missing or empty 'url'"}), 400
+    logging.info("Crawl API received | keys=%s notifyEmail=%r", list(data.keys()), data.get("notifyEmail"))
     options = {
         "max_depth": data.get("maxDepth"),
         "max_pages": data.get("maxPages"),
         "full_site": bool(data.get("fullSite", False)),
+        "notify_email": (data.get("notifyEmail") or "").strip() or None,
     }
     try:
         job = create_crawl_job(url, options)
@@ -396,6 +403,161 @@ def api_crawl_pages(crawl_id):
         logging.exception("Error fetching crawl pages: %s", e)
         return jsonify({"ok": False, "error": "Unable to retrieve crawl pages"}), 500
     return jsonify({"ok": True, "crawl_id": crawl_id, "pages": pages, "count": len(pages)})
+
+
+@app.route("/api/crawls", methods=["GET"])
+def api_crawls_list():
+    """Return recent crawl jobs from the database, ordered newest first."""
+    if not db.is_ready():
+        return jsonify({
+            "ok": True,
+            "available": False,
+            "items": [],
+            "message": "Crawl history unavailable: " + (db.init_error() or "database not configured"),
+        })
+    try:
+        limit = request.args.get("limit", type=int) or 25
+        items = db.get_all_crawl_jobs(limit=limit)
+        return jsonify({"ok": True, "available": True, "items": items})
+    except Exception as e:
+        logging.exception("[DB] Failed to get crawl jobs: %s", e)
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@app.route("/api/violations/summary", methods=["GET"])
+def api_violations_summary():
+    """Aggregate violation intelligence from recent scan payloads.
+
+    Architecture note: regression detection uses only the Violations integer
+    column (no JSON parsing), so it is fast regardless of payload size.
+    Payload parsing is bounded by the limit param (default 100 rows).
+    """
+    if not db.is_ready():
+        return jsonify({
+            "ok": True,
+            "available": False,
+            "severity_breakdown": {"critical": 0, "serious": 0, "moderate": 0, "minor": 0},
+            "top_issue_types": [],
+            "wcag_breakdown": [],
+            "needs_attention": [],
+            "message": "Violation summary unavailable: " + (db.init_error() or "database not configured"),
+        })
+    try:
+        limit = request.args.get("limit", type=int) or 100
+        intel = db.get_violation_intel(limit=limit)
+        regressions = db.get_regression_candidates()
+        return jsonify({
+            "ok": True,
+            "available": True,
+            **intel,
+            "needs_attention": regressions,
+        })
+    except Exception as e:
+        logging.exception("[DB] Failed to get violation summary: %s", e)
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@app.route("/api/ai-fix", methods=["POST"])
+def api_ai_fix():
+    """Generate an AI-powered accessibility fix using Claude API."""
+    if not request.is_json:
+        return jsonify({"ok": False, "error": "Content-Type must be application/json"}), 400
+    try:
+        data = request.get_json(silent=True) or {}
+    except Exception:
+        return jsonify({"ok": False, "error": "Invalid JSON body"}), 400
+
+    violation = data.get("violation") or {}
+    framework = (data.get("framework") or "html").strip().lower()
+
+    if not violation or not violation.get("id"):
+        return jsonify({"ok": False, "error": "Missing violation data"}), 400
+
+    api_key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
+    if not api_key:
+        # Return structured mock response when no key configured
+        return jsonify({
+            "ok": True,
+            "explanation": f"This violation ({violation.get('id')}) was detected. Configure ANTHROPIC_API_KEY in .env to get AI-powered fixes.",
+            "wcagCriterion": violation.get("helpUrl", "https://www.w3.org/WAI/WCAG21/"),
+            "before": "<!-- Original code with accessibility issue -->\n<input type=\"email\" placeholder=\"Work email\" />",
+            "after": "<!-- Fixed code -->\n<label for=\"email\">Work email</label>\n<input id=\"email\" type=\"email\" autocomplete=\"email\" />",
+        })
+
+    # Build prompt
+    rule_id = violation.get("id", "unknown")
+    description = violation.get("description", "")
+    impact = violation.get("impact", "serious")
+    help_text = violation.get("help", "")
+    help_url = violation.get("helpUrl", "")
+    nodes = violation.get("nodes", [])
+    node_html = nodes[0].get("html", "") if nodes else ""
+
+    framework_note = {
+        "react": "Use React/JSX syntax (htmlFor instead of for, className instead of class, camelCase attributes)",
+        "vue": "Use Vue 3 template syntax with proper accessibility attributes",
+        "html": "Use standard HTML5 with ARIA attributes where needed",
+    }.get(framework, "Use standard HTML5")
+
+    prompt = f"""You are an expert web accessibility engineer specializing in WCAG 2.1 compliance.
+
+A website accessibility scanner detected this violation:
+- Rule ID: {rule_id}
+- Impact: {impact}
+- Description: {description}
+- Help: {help_text}
+- WCAG Reference: {help_url}
+- Example HTML with issue: {node_html}
+
+Framework: {framework_note}
+
+Provide a structured fix in this EXACT JSON format (no other text, valid JSON only):
+{{
+  "explanation": "Plain English explanation of WHY this is an accessibility problem and WHO it affects",
+  "wcagCriterion": "WCAG 2.1 Success Criterion X.X.X - Criterion Name (Level A/AA/AAA)",
+  "before": "The problematic code snippet (2-10 lines max)",
+  "after": "The corrected code snippet with proper accessibility attributes (2-10 lines max)"
+}}"""
+
+    try:
+        import urllib.request
+        import urllib.error
+
+        payload = json.dumps({
+            "model": "claude-sonnet-4-6",
+            "max_tokens": 800,
+            "messages": [{"role": "user", "content": prompt}]
+        }).encode()
+
+        req = urllib.request.Request(
+            "https://api.anthropic.com/v1/messages",
+            data=payload,
+            headers={
+                "x-api-key": api_key,
+                "anthropic-version": "2023-06-01",
+                "content-type": "application/json",
+            },
+            method="POST",
+        )
+
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            result = json.loads(resp.read())
+
+        text = result["content"][0]["text"].strip()
+        # Parse JSON from Claude response
+        fix_data = json.loads(text)
+        return jsonify({"ok": True, **fix_data})
+
+    except urllib.error.HTTPError as e:
+        body = e.read().decode("utf-8", errors="replace")
+        logging.error("Claude API error: %s %s", e.code, body)
+        return jsonify({"ok": False, "error": f"AI service error: {e.code}"}), 502
+    except json.JSONDecodeError as e:
+        logging.error("Failed to parse Claude JSON response: %s", e)
+        return jsonify({"ok": False, "error": "AI response parsing failed"}), 502
+    except Exception as e:
+        logging.exception("AI fix endpoint error: %s", e)
+        return jsonify({"ok": False, "error": str(e)}), 500
 
 
 @app.route("/", defaults={"path": ""})

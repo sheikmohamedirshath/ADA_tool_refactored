@@ -9,6 +9,14 @@ from datetime import datetime, timezone
 from services import db
 from services.crawler import get_root_domain, normalize_url, extract_internal_links
 
+# Import in-memory helpers — no circular import because crawl_service only
+# imports crawl_task inside a function body (not at module level).
+from backend.services.crawl_service import (
+    inmemory_update_crawl,
+    inmemory_append_page,
+    inmemory_update_page,
+)
+
 logger = logging.getLogger(__name__)
 
 
@@ -31,16 +39,18 @@ def crawl_site_task(
     root_url: str,
     max_depth: int,
     max_pages: int,
+    notify_email: str = None,
 ) -> dict:
     """
     BFS site crawl: navigate each page with a shared Playwright browser,
-    run axe on each page, persist results to DB.
+    run axe on each page, persist results to DB and in-memory fallback.
     """
     from playwright.sync_api import sync_playwright, TimeoutError as PWTimeout
     from axe_playwright_python.sync_playwright import Axe
 
     started_at = _utcnow_iso()
     db.update_crawl_job_status(crawl_id, "running", started_at=started_at)
+    inmemory_update_crawl(crawl_id, status="running", started_at=started_at)
     logger.info(
         "Crawl started | crawl_id=%s url=%s depth=%d pages=%d",
         crawl_id, root_url, max_depth, max_pages,
@@ -67,9 +77,22 @@ def crawl_site_task(
                 url, parent_url, depth = queue.popleft()
                 norm_url = normalize_url(url)
 
+                page_base = {
+                    "crawl_id": crawl_id,
+                    "url": url,
+                    "normalized_url": norm_url,
+                    "parent_url": parent_url,
+                    "depth": depth,
+                    "status": "running",
+                    "passes": None,
+                    "violations": None,
+                    "pass_rate": None,
+                    "failure_reason": None,
+                }
                 page_id = db.save_crawl_page(
                     crawl_id, url, norm_url, parent_url, depth, status="running"
                 )
+                page_idx = inmemory_append_page(crawl_id, page_base)
                 scanned_at = _utcnow_iso()
 
                 try:
@@ -116,11 +139,19 @@ def crawl_site_task(
 
                     db.update_crawl_page(
                         page_id,
-                        status="completed",
+                        status="scanned",
                         passes=pcount,
                         violations=vcount,
                         pass_rate=pass_rate,
                         scan_history_id=history_id,
+                        scanned_at=scanned_at,
+                    )
+                    inmemory_update_page(
+                        crawl_id, page_idx,
+                        status="scanned",
+                        passes=pcount,
+                        violations=vcount,
+                        pass_rate=pass_rate,
                         scanned_at=scanned_at,
                     )
                     total_scanned += 1
@@ -135,9 +166,20 @@ def crawl_site_task(
                         status="failed",
                         failure_reason=str(exc)[:500],
                     )
+                    inmemory_update_page(
+                        crawl_id, page_idx,
+                        status="failed",
+                        failure_reason=str(exc)[:500],
+                    )
                     total_failed += 1
 
                 db.update_crawl_job_progress(
+                    crawl_id,
+                    total_discovered=len(visited),
+                    total_scanned=total_scanned,
+                    total_failed=total_failed,
+                )
+                inmemory_update_crawl(
                     crawl_id,
                     total_discovered=len(visited),
                     total_scanned=total_scanned,
@@ -154,6 +196,12 @@ def crawl_site_task(
             ended_at=failed_at,
             failure_reason=str(exc)[:1000],
         )
+        inmemory_update_crawl(
+            crawl_id,
+            status="failed",
+            ended_at=failed_at,
+            failure_reason=str(exc)[:1000],
+        )
         logger.error(
             "Crawl failed | crawl_id=%s reason=%s", crawl_id, exc, exc_info=True
         )
@@ -166,10 +214,30 @@ def crawl_site_task(
         ended_at=completed_at,
         duration_seconds=duration,
     )
+    inmemory_update_crawl(
+        crawl_id,
+        status="completed",
+        ended_at=completed_at,
+        duration_seconds=duration,
+    )
     logger.info(
         "Crawl completed | crawl_id=%s scanned=%d failed=%d duration=%.1fs",
         crawl_id, total_scanned, total_failed, duration or 0,
     )
+
+    if notify_email:
+        try:
+            from backend.services.email_service import send_crawl_report
+            sent = send_crawl_report(crawl_id, notify_email)
+            logger.info("Email send result | sent=%s to=%s", sent, notify_email)
+        except Exception as _email_exc:
+            logger.error(
+                "Crawl report email failed | crawl_id=%s error=%s",
+                crawl_id, _email_exc, exc_info=True,
+            )
+    else:
+        logger.info("Email skipped — notify_email is empty/None")
+
     return {
         "crawl_id": crawl_id,
         "root_url": root_url,

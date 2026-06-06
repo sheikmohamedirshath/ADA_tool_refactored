@@ -205,6 +205,14 @@ def _ensure_table() -> None:
         conn.commit()
         cur.execute("""
             IF NOT EXISTS (
+                SELECT 1 FROM sys.columns
+                WHERE object_id = OBJECT_ID(N'dbo.CrawlJob') AND name = N'NotifyEmail'
+            )
+            ALTER TABLE dbo.CrawlJob ADD NotifyEmail NVARCHAR(500) NULL
+        """)
+        conn.commit()
+        cur.execute("""
+            IF NOT EXISTS (
                 SELECT 1 FROM sys.tables WHERE name = N'CrawlPage')
             CREATE TABLE dbo.CrawlPage (
                 Id              INT IDENTITY(1,1) PRIMARY KEY,
@@ -663,6 +671,7 @@ def save_crawl_job(
     rq_job_id: str | None = None,
     status: str = "pending",
     created_at: str | None = None,
+    notify_email: str | None = None,
     metadata: dict | None = None,
 ) -> None:
     if not is_enabled() or _INIT_ERROR:
@@ -674,11 +683,11 @@ def save_crawl_job(
             cur.execute(
                 """
                 INSERT INTO dbo.CrawlJob
-                    (CrawlId, RQJobId, RootUrl, Status, MaxDepth, MaxPages, CreatedAt, Metadata)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    (CrawlId, RQJobId, RootUrl, Status, MaxDepth, MaxPages, CreatedAt, NotifyEmail, Metadata)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (crawl_id, rq_job_id, root_url, status, max_depth, max_pages,
-                 created_at, json.dumps(metadata or {})),
+                 created_at, notify_email, json.dumps(metadata or {})),
             )
         conn.commit()
     finally:
@@ -784,6 +793,7 @@ def get_crawl_job(crawl_id: str) -> dict | None:
             "ended_at": _ts(row.EndedAt),
             "duration_seconds": row.DurationSeconds,
             "failure_reason": row.FailureReason,
+            "notify_email": row.NotifyEmail,
         }
     finally:
         conn.close()
@@ -904,6 +914,182 @@ def get_crawl_pages(crawl_id: str) -> list[dict]:
                 "failure_reason": r.FailureReason,
             }
             for r in rows
+        ]
+    finally:
+        conn.close()
+
+
+def get_all_crawl_jobs(limit: int = 25) -> list[dict]:
+    """
+    Return recent crawl jobs ordered by CreatedAt DESC.
+    Each dict: crawl_id, root_url, status, total_scanned, total_failed,
+               created_at, ended_at, duration_seconds.
+    Returns empty list when persistence is disabled or no rows exist.
+    """
+    if not is_enabled() or _INIT_ERROR:
+        return []
+    conn = _conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT TOP (?) CrawlId, RootUrl, Status,
+                               TotalScanned, TotalFailed,
+                               CreatedAt, EndedAt, DurationSeconds
+                FROM dbo.CrawlJob
+                ORDER BY CreatedAt DESC
+                """,
+                (limit,),
+            )
+            rows = cur.fetchall()
+        return [
+            {
+                "crawl_id": r.CrawlId,
+                "root_url": r.RootUrl or "",
+                "status": r.Status or "unknown",
+                "total_scanned": int(r.TotalScanned or 0),
+                "total_failed": int(r.TotalFailed or 0),
+                "created_at": _ts(r.CreatedAt),
+                "ended_at": _ts(r.EndedAt),
+                "duration_seconds": float(r.DurationSeconds) if r.DurationSeconds is not None else None,
+            }
+            for r in rows
+        ]
+    finally:
+        conn.close()
+
+
+# ── Violation intelligence ─────────────────────────────────────────────────────
+
+def get_violation_intel(limit: int = 100) -> dict:
+    """
+    Aggregate violation intelligence from the most recent scan payloads.
+    Parses ResultPayload.axeResult.violations for each row.
+    Bad/null/malformed rows are silently skipped — one bad row never fails the call.
+
+    Counts are per affected DOM node (not per unique rule), which gives a more
+    accurate picture of how widespread each violation type is.
+
+    Returns:
+        severity_breakdown  – node counts keyed by impact level
+        top_issue_types     – [{rule_id, count}] top 10 sorted desc
+        wcag_breakdown      – [{tag, count}] sorted desc (wcag* tags only)
+    """
+    if not is_enabled() or _INIT_ERROR:
+        return {
+            "severity_breakdown": {"critical": 0, "serious": 0, "moderate": 0, "minor": 0},
+            "top_issue_types": [],
+            "wcag_breakdown": [],
+        }
+    conn = _conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT TOP (?) ResultPayload
+                FROM dbo.ScanHistory
+                WHERE ResultPayload IS NOT NULL
+                ORDER BY TimestampUtc DESC
+                """,
+                (limit,),
+            )
+            rows = cur.fetchall()
+    finally:
+        conn.close()
+
+    severity: dict[str, int] = {"critical": 0, "serious": 0, "moderate": 0, "minor": 0}
+    rule_counts: dict[str, int] = {}
+    tag_counts: dict[str, int] = {}
+
+    for row in rows:
+        try:
+            payload = json.loads(row[0]) if row[0] else None
+        except (json.JSONDecodeError, TypeError):
+            continue
+        if not isinstance(payload, dict):
+            continue
+        axe = payload.get("axeResult") or {}
+        if not isinstance(axe, dict):
+            continue
+        for v in (axe.get("violations") or []):
+            if not isinstance(v, dict):
+                continue
+            impact = (v.get("impact") or "minor").lower()
+            if impact not in severity:
+                impact = "minor"
+            # Count affected nodes; treat a fired rule with no nodes as 1 occurrence
+            node_count = max(len(v.get("nodes") or []), 1)
+            severity[impact] += node_count
+
+            rule_id = v.get("id") or "unknown"
+            rule_counts[rule_id] = rule_counts.get(rule_id, 0) + node_count
+
+            for tag in (v.get("tags") or []):
+                if isinstance(tag, str) and tag.lower().startswith("wcag"):
+                    tag_counts[tag] = tag_counts.get(tag, 0) + node_count
+
+    top_issue_types = sorted(
+        [{"rule_id": k, "count": v} for k, v in rule_counts.items()],
+        key=lambda x: x["count"],
+        reverse=True,
+    )[:10]
+
+    wcag_breakdown = sorted(
+        [{"tag": k, "count": v} for k, v in tag_counts.items()],
+        key=lambda x: x["count"],
+        reverse=True,
+    )
+
+    return {
+        "severity_breakdown": severity,
+        "top_issue_types": top_issue_types,
+        "wcag_breakdown": wcag_breakdown,
+    }
+
+
+def get_regression_candidates() -> list[dict]:
+    """
+    Find URLs where the most recent scan has more violations than the previous scan.
+    Uses only Url and Violations columns — no JSON parsing required.
+
+    Returns list of {url, previous_violations, current_violations, delta}
+    sorted by delta descending (worst regression first).
+    """
+    if not is_enabled() or _INIT_ERROR:
+        return []
+    conn = _conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                WITH ranked AS (
+                    SELECT Url, Violations,
+                           ROW_NUMBER() OVER (
+                               PARTITION BY Url
+                               ORDER BY TimestampUtc DESC
+                           ) AS rn
+                    FROM dbo.ScanHistory
+                    WHERE Url IS NOT NULL AND Url != N''
+                )
+                SELECT
+                    curr.Url,
+                    prev.Violations AS PreviousViolations,
+                    curr.Violations AS CurrentViolations
+                FROM ranked curr
+                JOIN ranked prev
+                    ON curr.Url = prev.Url AND prev.rn = 2
+                WHERE curr.rn = 1
+                  AND curr.Violations > prev.Violations
+                ORDER BY (curr.Violations - prev.Violations) DESC
+            """)
+            rows = cur.fetchall()
+        return [
+            {
+                "url": row[0],
+                "previous_violations": int(row[1]),
+                "current_violations": int(row[2]),
+                "delta": int(row[2]) - int(row[1]),
+            }
+            for row in rows
         ]
     finally:
         conn.close()

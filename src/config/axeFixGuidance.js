@@ -118,6 +118,32 @@ const RULE_FIX_EXAMPLES = {
   ],
 }
 
+const RULE_WHY_MATTERS = {
+  'button-name': 'Screen reader users rely on button labels to understand what actions are available. A button without an accessible name is effectively silent to assistive technology — it may be skipped or announced as just "button" with no context.',
+  'color-contrast': 'Low contrast text is unreadable for users with low vision or color blindness. WCAG requires a 4.5:1 ratio for normal text and 3:1 for large text — failing this can exclude up to 8% of the population.',
+  'image-alt': 'Screen readers announce alt text in place of images. Without it, meaningful visuals convey nothing to users who cannot see them, breaking the information flow entirely.',
+  'link-name': 'Screen reader users navigate pages by jumping between links. An unnamed link provides no destination context, making navigation unreliable and potentially unusable.',
+  'label': 'Form controls without labels cannot be identified by assistive technology. Users may not know what information is required or what they are editing, leading to errors and abandonment.',
+  'heading-order': 'Screen reader users navigate documents by heading structure. Skipped or reversed heading levels break this navigation model and obscure the hierarchy of content.',
+  'html-has-lang': 'The language attribute tells screen readers which voice profile and pronunciation rules to apply. Without it, content may be mispronounced or completely unintelligible.',
+  'frame-title': 'Screen reader users need frame titles to understand embedded content before deciding whether to navigate into it. Untitled frames are announced without any context.',
+  'region': 'Landmark regions let screen reader users skip directly to main content, navigation, or search. Pages without landmarks require reading every element from the top on each visit.',
+  'meta-viewport': 'Disabling pinch-to-zoom forces users with low vision to read at a fixed size. This can make text completely illegible without other assistive tools and violates WCAG 1.4.4.',
+  'list-item': 'Screen readers announce list context such as "list of 5 items". Broken list markup strips that context and may produce confusing or incorrect announcements.',
+  'aria-allowed-attr': 'Invalid ARIA attributes can confuse assistive technology or cause it to misreport an element\'s role, state, or properties, leading to incorrect user expectations.',
+  'aria-required-attr': 'Required ARIA attributes are essential for assistive technology to correctly describe interactive components like menus, dialogs, and grids. Missing them leaves the accessible interface incomplete.',
+  'aria-valid-attr': 'Non-existent ARIA attributes are silently ignored or cause errors in screen readers, leaving the accessible interface broken without any visible indication.',
+  'aria-valid-attr-value': 'Incorrect ARIA values cause screen readers to announce wrong states — for example, a collapsed menu announced as expanded — creating a mismatch between what users hear and what they see.',
+  'autocomplete-valid': 'Valid autocomplete values help password managers and assistive technology pre-fill form fields accurately, reducing friction and errors for all users.',
+}
+
+const IMPACT_WHY_FALLBACK = {
+  critical: 'This issue prevents some users from accessing or completing this interaction entirely.',
+  serious:  'This issue creates a significant barrier for users relying on assistive technology and should be prioritised.',
+  moderate: 'This issue causes friction for some users with disabilities and degrades the accessible experience.',
+  minor:    'This is a low-risk gap that may affect some users in specific assistive technology configurations.',
+}
+
 function normalizeRuleId(ruleId) {
   return (ruleId || '').toLowerCase()
 }
@@ -128,6 +154,14 @@ export function getRuleFixTips(ruleId) {
 
 export function getRuleFixExamples(ruleId) {
   return RULE_FIX_EXAMPLES[normalizeRuleId(ruleId)] || []
+}
+
+export function getRuleWhyMatters(ruleId, impact) {
+  return (
+    RULE_WHY_MATTERS[normalizeRuleId(ruleId)] ||
+    IMPACT_WHY_FALLBACK[(impact || 'minor').toLowerCase()] ||
+    IMPACT_WHY_FALLBACK.minor
+  )
 }
 
 export function splitFailureSummary(text) {

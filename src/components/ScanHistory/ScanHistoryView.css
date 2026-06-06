@@ -37,7 +37,7 @@
   background: var(--accent-soft);
   padding: 12px 16px;
   border-radius: var(--radius-md);
-  border: 1px solid var(--accent);
+  border: 1px solid var(--accent-primary);
 }
 
 .scan-history__table-wrap {
@@ -105,7 +105,7 @@
   border: none;
   padding: 0;
   font: inherit;
-  color: var(--accent);
+  color: var(--accent-primary);
   cursor: pointer;
   text-decoration: none;
 }
@@ -115,7 +115,7 @@
 }
 
 .scan-history__cell-url a {
-  color: var(--accent);
+  color: var(--accent-primary);
   text-decoration: none;
 }
 

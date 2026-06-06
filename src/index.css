@@ -1,57 +1,177 @@
+/* ─── Tailwind CSS ───────────────────────────────────────── */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ─── Tailwind component utilities ──────────────────────── */
+@layer components {
+  .card {
+    @apply rounded-2xl border border-gray-100 bg-white shadow-soft dark:border-white/[0.06] dark:bg-charcoal;
+  }
+  .section {
+    @apply max-w-7xl mx-auto px-4 sm:px-6 lg:px-8;
+  }
+  .page-shell {
+    @apply min-h-screen bg-ivory font-body dark:bg-night;
+  }
+  .btn-primary {
+    @apply inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-teal text-white font-semibold font-heading text-sm hover:bg-teal-700 transition-colors duration-200 cursor-pointer border-0;
+  }
+  .btn-secondary {
+    @apply inline-flex items-center gap-2 px-5 py-2.5 rounded-xl border border-gray-200 bg-white text-ink font-semibold font-heading text-sm hover:bg-ivory transition-colors duration-200 cursor-pointer dark:border-white/10 dark:bg-charcoal dark:text-white dark:hover:bg-white/5;
+  }
+  .btn-ghost {
+    @apply inline-flex items-center gap-2 px-4 py-2 rounded-xl text-body font-medium text-sm hover:bg-gray-100 transition-colors duration-200 cursor-pointer dark:text-gray-400 dark:hover:bg-white/5;
+  }
+  .input-base {
+    @apply w-full px-4 py-2.5 rounded-xl border border-gray-300 bg-white text-ink placeholder-gray-400 text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-teal/30 focus:border-teal transition-all duration-200 dark:border-white/20 dark:bg-charcoal dark:text-white dark:placeholder-gray-500 dark:shadow-none disabled:opacity-60 disabled:cursor-not-allowed;
+  }
+  .nav-item {
+    @apply flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium text-body transition-colors duration-200 cursor-pointer hover:bg-ivory dark:text-gray-400 dark:hover:bg-white/5;
+  }
+  .nav-item-active {
+    @apply flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-semibold text-teal bg-teal/10 cursor-pointer;
+  }
+}
+
+/* ─── Design tokens: light (default) and dark theme ─────── */
 /* Design tokens: light (default) and dark theme */
 :root,
 [data-theme="light"] {
-  --header-bg: #0f1419;
-  --header-border: rgba(255, 255, 255, 0.06);
-  --header-text: #ffffff;
-  --header-subtitle: rgba(255, 255, 255, 0.7);
-  --accent: #2563eb;
-  --accent-hover: #1d4ed8;
-  --accent-soft: rgba(37, 99, 235, 0.12);
-  --sidebar-bg: #f8fafc;
-  --sidebar-border: #e2e8f0;
-  --content-bg: #f1f5f9;
-  --card-bg: #ffffff;
-  --card-border: #e2e8f0;
-  --text-primary: #0f172a;
-  --text-secondary: #475569;
-  --text-muted: #64748b;
-  --input-bg: #ffffff;
-  --input-border: #e2e8f0;
-  --radius-sm: 10px;
-  --radius-md: 14px;
-  --radius-lg: 20px;
-  --radius-xl: 28px;
-  --shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.04);
-  --shadow-md: 0 4px 12px rgba(15, 23, 42, 0.06);
-  --shadow-lg: 0 12px 40px rgba(15, 23, 42, 0.08);
-  --ease-out: cubic-bezier(0.33, 1, 0.68, 1);
-  --transition-fast: 0.2s var(--ease-out);
-  --transition-smooth: 0.35s var(--ease-out);
+  /* Core palette */
+  --bg-base:                #F8F6F1;
+  --bg-mid:                 #F8F6F1;
+  --bg-card:                #FFFFFF;
+
+  /* Accent — primary (teal) */
+  --accent-primary:         #0F766E;
+  --accent-hover:           #0D6B64;
+  --accent-soft:            rgba(15, 118, 110, 0.10);
+
+  /* Accent — secondary (terracotta) */
+  --accent-secondary:       #D97757;
+  --accent-secondary-soft:  rgba(217, 119, 87, 0.10);
+
+  /* Semantic status colours */
+  --success:                #6BA368;
+  --success-soft:           rgba(107, 163, 104, 0.12);
+  --warning:                #F59E0B;
+  --warning-soft:           rgba(245, 158, 11, 0.12);
+  --critical:               #E76F51;
+  --critical-soft:          rgba(231, 111, 81, 0.12);
+
+  /* Text */
+  --text-primary:           #1F2937;
+  --text-secondary:         #4B5563;
+  --text-muted:             #6B7280;
+
+  /* Borders */
+  --border-subtle:          #E8E4DC;
+  --border-default:         #D4CFC6;
+
+  /* Typography */
+  --font-heading:           'Space Grotesk', sans-serif;
+  --font-body:              'Inter', sans-serif;
+
+  /* Shape */
+  --radius-sm:              8px;
+  --radius-md:              12px;
+  --radius-lg:              16px;
+  --radius-xl:              24px;
+
+  /* Shadows */
+  --shadow-sm:              0 1px 3px rgba(0, 0, 0, 0.06), 0 1px 2px rgba(0, 0, 0, 0.04);
+  --shadow-md:              0 4px 16px rgba(0, 0, 0, 0.08), 0 2px 6px rgba(0, 0, 0, 0.04);
+  --shadow-lg:              0 20px 48px rgba(0, 0, 0, 0.10), 0 8px 16px rgba(0, 0, 0, 0.06);
+
+  /* Motion */
+  --ease-out:               cubic-bezier(0.33, 1, 0.68, 1);
+  --transition-fast:        0.18s ease;
+  --transition-smooth:      0.32s var(--ease-out);
+
+  /* Backwards-compat aliases */
+  --accent:                 var(--accent-primary);
+  --content-bg:             var(--bg-base);
+  --card-bg:                var(--bg-card);
+  --card-border:            var(--border-subtle);
+  --sidebar-bg:             var(--bg-card);
+  --sidebar-border:         var(--border-subtle);
+  --header-bg:              var(--bg-card);
+  --header-border:          var(--border-subtle);
+  --header-text:            var(--text-primary);
+  --header-subtitle:        var(--text-muted);
+  --input-bg:               var(--bg-card);
+  --input-border:           var(--border-default);
 }
 
 [data-theme="dark"] {
-  --header-bg: #0a0a0a;
-  --header-border: rgba(255, 255, 255, 0.06);
-  --header-text: #ffffff;
-  --header-subtitle: rgba(255, 255, 255, 0.6);
-  --accent: #3b82f6;
-  --accent-hover: #2563eb;
-  --accent-soft: rgba(59, 130, 246, 0.2);
-  --sidebar-bg: #141414;
-  --sidebar-border: rgba(255, 255, 255, 0.08);
-  --content-bg: #000000;
-  --card-bg: #1a1a1a;
-  --card-border: rgba(255, 255, 255, 0.08);
-  --text-primary: #ffffff;
-  --text-secondary: #a1a1aa;
-  --text-muted: #71717a;
-  --input-bg: #262626;
-  --input-border: rgba(255, 255, 255, 0.1);
-  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
-  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.4);
-  --shadow-lg: 0 12px 40px rgba(0, 0, 0, 0.5);
+  /* Core palette */
+  --bg-base:                #161616;
+  --bg-mid:                 #1F1F1F;
+  --bg-card:                #252525;
+
+  /* Accent — primary (teal, slightly brightened for dark) */
+  --accent-primary:         #14B8A6;
+  --accent-hover:           #0F9D8E;
+  --accent-soft:            rgba(20, 184, 166, 0.15);
+
+  /* Accent — secondary (terracotta) */
+  --accent-secondary:       #E8896A;
+  --accent-secondary-soft:  rgba(232, 137, 106, 0.15);
+
+  /* Semantic status colours */
+  --success:                #6BA368;
+  --success-soft:           rgba(107, 163, 104, 0.18);
+  --warning:                #F59E0B;
+  --warning-soft:           rgba(245, 158, 11, 0.18);
+  --critical:               #E76F51;
+  --critical-soft:          rgba(231, 111, 81, 0.18);
+
+  /* Text */
+  --text-primary:           #F9FAFB;
+  --text-secondary:         #D1D5DB;
+  --text-muted:             #9CA3AF;
+
+  /* Borders */
+  --border-subtle:          rgba(255, 255, 255, 0.08);
+  --border-default:         rgba(255, 255, 255, 0.14);
+
+  /* Typography (unchanged) */
+  --font-heading:           'Space Grotesk', sans-serif;
+  --font-body:              'Inter', sans-serif;
+
+  /* Shape (unchanged) */
+  --radius-sm:              8px;
+  --radius-md:              12px;
+  --radius-lg:              16px;
+  --radius-xl:              24px;
+
+  /* Shadows */
+  --shadow-sm:              0 1px 3px rgba(0, 0, 0, 0.30), 0 1px 2px rgba(0, 0, 0, 0.20);
+  --shadow-md:              0 4px 16px rgba(0, 0, 0, 0.40), 0 2px 6px rgba(0, 0, 0, 0.25);
+  --shadow-lg:              0 20px 48px rgba(0, 0, 0, 0.55), 0 8px 16px rgba(0, 0, 0, 0.35);
+
+  /* Motion (unchanged) */
+  --ease-out:               cubic-bezier(0.33, 1, 0.68, 1);
+  --transition-fast:        0.18s ease;
+  --transition-smooth:      0.32s var(--ease-out);
+
+  /* Backwards-compat aliases */
+  --accent:                 var(--accent-primary);
+  --content-bg:             var(--bg-base);
+  --card-bg:                var(--bg-card);
+  --card-border:            var(--border-subtle);
+  --sidebar-bg:             var(--bg-mid);
+  --sidebar-border:         var(--border-subtle);
+  --header-bg:              var(--bg-card);
+  --header-border:          var(--border-subtle);
+  --header-text:            var(--text-primary);
+  --header-subtitle:        var(--text-muted);
+  --input-bg:               var(--bg-mid);
+  --input-border:           var(--border-default);
 }
+
+/* ─── Base reset ─────────────────────────────────────────── */
 
 *,
 *::before,
@@ -63,12 +183,44 @@ html {
   scroll-behavior: smooth;
 }
 
+/* Smooth custom scrollbar (WebKit) */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--border-default);
+  border-radius: 99px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--text-muted);
+  background-clip: padding-box;
+}
+
+/* Firefox */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-default) transparent;
+}
+
+/* ─── Body & root ────────────────────────────────────────── */
+
 body {
   margin: 0;
-  font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu, sans-serif;
+  font-family: var(--font-body), -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu, sans-serif;
+  font-size: 16px;
+  line-height: 1.6;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  background: var(--content-bg);
+  background: var(--bg-base);
   color: var(--text-primary);
 }
 
@@ -76,4 +228,64 @@ body {
   min-height: 100vh;
   display: flex;
   flex-direction: column;
+}
+
+/* ─── Heading defaults ───────────────────────────────────── */
+
+h1,
+h2,
+h3,
+h4,
+h5,
+h6 {
+  font-family: var(--font-heading), sans-serif;
+  font-weight: 600;
+  line-height: 1.25;
+  color: var(--text-primary);
+  margin-top: 0;
+  margin-bottom: 0.5em;
+}
+
+h1 { font-size: 2rem;    font-weight: 700; }
+h2 { font-size: 1.5rem;  font-weight: 700; }
+h3 { font-size: 1.25rem; font-weight: 600; }
+h4 { font-size: 1.125rem; font-weight: 600; }
+h5 { font-size: 1rem;    font-weight: 600; }
+h6 { font-size: 0.875rem; font-weight: 600; }
+
+/* ─── Misc base resets ───────────────────────────────────── */
+
+p {
+  margin-top: 0;
+  margin-bottom: 1em;
+}
+
+a {
+  color: var(--accent-primary);
+  text-decoration: none;
+  transition: color var(--transition-fast);
+}
+
+a:hover {
+  color: var(--accent-hover);
+}
+
+img,
+svg {
+  display: block;
+  max-width: 100%;
+}
+
+button {
+  font-family: inherit;
+  cursor: pointer;
+  background-color: transparent;
+  border: none;
+  outline: none;
+}
+
+input,
+textarea,
+select {
+  font-family: inherit;
 }

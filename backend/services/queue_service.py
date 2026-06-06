@@ -240,6 +240,7 @@ class QueueService:
         root_url: str,
         max_depth: int,
         max_pages: int,
+        notify_email: str = None,
     ):
         """Enqueue a site crawl task. No retry — crawls are long-running and non-idempotent."""
         if not self._connected:
@@ -250,10 +251,11 @@ class QueueService:
         if self._backend == "redis":
             job = self._queue.enqueue(
                 self._function_reference(task_func),
-                crawl_id,
-                root_url,
-                max_depth,
-                max_pages,
+                crawl_id=crawl_id,
+                root_url=root_url,
+                max_depth=max_depth,
+                max_pages=max_pages,
+                notify_email=notify_email,
                 job_timeout=timeout,
                 result_ttl=Config.SCAN_JOB_RESULT_TTL,
                 failure_ttl=Config.SCAN_JOB_FAILURE_TTL,
@@ -262,11 +264,11 @@ class QueueService:
 
         job_id = uuid.uuid4().hex
         created_at = datetime.utcnow().isoformat() + "Z"
-        fut = self._executor.submit(task_func, crawl_id, root_url, max_depth, max_pages)
+        fut = self._executor.submit(task_func, crawl_id=crawl_id, root_url=root_url, max_depth=max_depth, max_pages=max_pages, notify_email=notify_email)
         with self._inmemory_lock:
             self._inmemory_jobs[job_id] = {
                 "future": fut,
-                "meta": {"crawl_id": crawl_id, "root_url": root_url},
+                "meta": {"crawl_id": crawl_id, "root_url": root_url, "notify_email": notify_email},
                 "created_at": created_at,
             }
             self._prune_inmemory_jobs()
