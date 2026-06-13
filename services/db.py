@@ -248,6 +248,147 @@ def _ensure_table() -> None:
             CREATE INDEX IX_CrawlPage_CrawlId ON dbo.CrawlPage(CrawlId)
         """)
         conn.commit()
+        # ── Phase 3 tables ────────────────────────────────────────────────────
+        cur.execute("""
+            IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = N'CrawlSchedule')
+            CREATE TABLE dbo.CrawlSchedule (
+                Id          INT IDENTITY(1,1) PRIMARY KEY,
+                RootUrl     NVARCHAR(2048) NOT NULL,
+                Frequency   NVARCHAR(20)   NOT NULL DEFAULT 'weekly',
+                Enabled     BIT            NOT NULL DEFAULT 1,
+                LastRunAt   DATETIME2(3)   NULL,
+                NextRunAt   DATETIME2(3)   NOT NULL,
+                CreatedAt   DATETIME2(3)   NOT NULL DEFAULT GETUTCDATE(),
+                UpdatedAt   DATETIME2(3)   NOT NULL DEFAULT GETUTCDATE()
+            )
+        """)
+        conn.commit()
+        cur.execute("""
+            IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = N'AccessibilityAlert')
+            CREATE TABLE dbo.AccessibilityAlert (
+                Id          INT IDENTITY(1,1) PRIMARY KEY,
+                CrawlId     NVARCHAR(100)  NOT NULL,
+                RootUrl     NVARCHAR(2048) NULL,
+                AlertType   NVARCHAR(50)   NOT NULL,
+                Severity    NVARCHAR(20)   NOT NULL DEFAULT 'moderate',
+                Details     NVARCHAR(MAX)  NULL,
+                Status      NVARCHAR(20)   NOT NULL DEFAULT 'active',
+                CreatedAt   DATETIME2(3)   NOT NULL DEFAULT GETUTCDATE()
+            )
+        """)
+        conn.commit()
+        cur.execute("""
+            IF NOT EXISTS (
+                SELECT 1 FROM sys.indexes
+                WHERE object_id = OBJECT_ID(N'dbo.AccessibilityAlert') AND name = N'IX_Alert_Status'
+            )
+            CREATE INDEX IX_Alert_Status ON dbo.AccessibilityAlert(Status, CreatedAt DESC)
+        """)
+        conn.commit()
+        cur.execute("""
+            IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = N'DigestHistory')
+            CREATE TABLE dbo.DigestHistory (
+                Id          INT IDENTITY(1,1) PRIMARY KEY,
+                WeekStart   DATE           NOT NULL,
+                WeekEnd     DATE           NOT NULL,
+                DigestData  NVARCHAR(MAX)  NULL,
+                SentAt      DATETIME2(3)   NULL,
+                EmailSentTo NVARCHAR(500)  NULL,
+                CreatedAt   DATETIME2(3)   NOT NULL DEFAULT GETUTCDATE()
+            )
+        """)
+        conn.commit()
+        # ── AssistiveScanHistory table ────────────────────────────────────────
+        cur.execute("""
+            IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = N'AssistiveScanHistory')
+            CREATE TABLE dbo.AssistiveScanHistory (
+                Id            INT IDENTITY(1,1) PRIMARY KEY,
+                ScanType      NVARCHAR(50)   NOT NULL,
+                Url           NVARCHAR(2048) NOT NULL,
+                TimestampUtc  DATETIME2(3)   NOT NULL,
+                Passed        BIT            NOT NULL DEFAULT 0,
+                ResultPayload NVARCHAR(MAX)  NULL
+            )
+        """)
+        conn.commit()
+        cur.execute("""
+            IF NOT EXISTS (
+                SELECT 1 FROM sys.indexes
+                WHERE object_id = OBJECT_ID(N'dbo.AssistiveScanHistory')
+                  AND name = N'IX_AssistiveScan_TimestampUtc'
+            )
+            CREATE INDEX IX_AssistiveScan_TimestampUtc
+                ON dbo.AssistiveScanHistory(TimestampUtc DESC)
+        """)
+        conn.commit()
+        cur.execute("""
+            IF NOT EXISTS (
+                SELECT 1 FROM sys.indexes
+                WHERE object_id = OBJECT_ID(N'dbo.AssistiveScanHistory')
+                  AND name = N'IX_AssistiveScan_ScanType'
+            )
+            CREATE INDEX IX_AssistiveScan_ScanType
+                ON dbo.AssistiveScanHistory(ScanType, TimestampUtc DESC)
+        """)
+        conn.commit()
+        # ── CrawlPage.ResultPayload — schema evolution ────────────────────────
+        cur.execute("""
+            IF NOT EXISTS (
+                SELECT 1 FROM sys.columns
+                WHERE object_id = OBJECT_ID(N'dbo.CrawlPage') AND name = N'ResultPayload'
+            )
+            ALTER TABLE dbo.CrawlPage ADD ResultPayload NVARCHAR(MAX) NULL
+        """)
+        conn.commit()
+        # ── Users ─────────────────────────────────────────────────────────────
+        cur.execute("""
+            IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = N'Users')
+            CREATE TABLE dbo.Users (
+                Id           INT IDENTITY(1,1) PRIMARY KEY,
+                FirstName    NVARCHAR(100)  NOT NULL,
+                LastName     NVARCHAR(100)  NOT NULL,
+                Email        NVARCHAR(320)  NOT NULL,
+                PasswordHash NVARCHAR(256)  NOT NULL,
+                IsActive     BIT            NOT NULL DEFAULT 1,
+                CreatedAtUtc DATETIME2(3)   NOT NULL DEFAULT GETUTCDATE()
+            )
+        """)
+        conn.commit()
+        cur.execute("""
+            IF NOT EXISTS (
+                SELECT 1 FROM sys.indexes
+                WHERE object_id = OBJECT_ID(N'dbo.Users') AND name = N'UX_Users_Email'
+            )
+            CREATE UNIQUE INDEX UX_Users_Email ON dbo.Users (Email)
+        """)
+        conn.commit()
+        # ── Users schema evolution ─────────────────────────────────────────────
+        _user_columns = [
+            ("EmailVerified",     "BIT NOT NULL DEFAULT 0"),
+            ("EmailVerifiedAt",   "DATETIME2(3) NULL"),
+            ("VerifyToken",       "NVARCHAR(128) NULL"),
+            ("VerifyTokenExpiry", "DATETIME2(3) NULL"),
+            ("AuthProvider",      "NVARCHAR(50) NULL"),
+            ("ProviderUserId",    "NVARCHAR(256) NULL"),
+        ]
+        for col, defn in _user_columns:
+            cur.execute(f"""
+                IF NOT EXISTS (
+                    SELECT 1 FROM sys.columns
+                    WHERE object_id = OBJECT_ID(N'dbo.Users') AND name = N'{col}'
+                )
+                ALTER TABLE dbo.Users ADD {col} {defn}
+            """)
+            conn.commit()
+        cur.execute("""
+            IF NOT EXISTS (
+                SELECT 1 FROM sys.indexes
+                WHERE object_id = OBJECT_ID(N'dbo.Users') AND name = N'IX_Users_VerifyToken'
+            )
+            CREATE INDEX IX_Users_VerifyToken ON dbo.Users (VerifyToken)
+            WHERE VerifyToken IS NOT NULL
+        """)
+        conn.commit()
     finally:
         conn.close()
 
@@ -282,6 +423,164 @@ def init_db() -> None:
         _INIT_ERROR = str(e)
         logger.exception("Database initialization failed: %s", e)
         _INIT_DONE = True  # Avoid repeated log spam
+
+
+def create_user(first_name: str, last_name: str, email: str, password_hash: str) -> dict:
+    """Insert a new user and return their record. Raises ValueError on duplicate email."""
+    conn = _conn()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            INSERT INTO dbo.Users (FirstName, LastName, Email, PasswordHash)
+            OUTPUT INSERTED.Id, INSERTED.FirstName, INSERTED.LastName,
+                   INSERTED.Email, INSERTED.CreatedAtUtc
+            VALUES (?, ?, ?, ?)
+            """,
+            first_name, last_name, email, password_hash,
+        )
+        row = cur.fetchone()
+        conn.commit()
+        return {
+            "id": row[0],
+            "firstName": row[1],
+            "lastName": row[2],
+            "email": row[3],
+            "createdAtUtc": row[4].isoformat() if row[4] else None,
+        }
+    except Exception as e:
+        if "UX_Users_Email" in str(e) or "unique" in str(e).lower() or "duplicate" in str(e).lower():
+            raise ValueError("email_already_registered")
+        raise
+    finally:
+        conn.close()
+
+
+def get_user_by_email(email: str) -> dict | None:
+    """Return the user row for the given email, or None if not found."""
+    conn = _conn()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            """SELECT Id, FirstName, LastName, Email, PasswordHash, IsActive, CreatedAtUtc,
+                      ISNULL(EmailVerified, 0) AS EmailVerified
+               FROM dbo.Users WHERE Email = ?""",
+            email,
+        )
+        row = cur.fetchone()
+        if not row:
+            return None
+        return {
+            "id": row[0],
+            "firstName": row[1],
+            "lastName": row[2],
+            "email": row[3],
+            "passwordHash": row[4],
+            "isActive": bool(row[5]),
+            "createdAtUtc": row[6].isoformat() if row[6] else None,
+            "emailVerified": bool(row[7]),
+        }
+    finally:
+        conn.close()
+
+
+def get_user_by_id(user_id: int) -> dict | None:
+    """Return the user row for the given id, or None if not found."""
+    conn = _conn()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT Id, FirstName, LastName, Email, IsActive, CreatedAtUtc FROM dbo.Users WHERE Id = ?",
+            user_id,
+        )
+        row = cur.fetchone()
+        if not row:
+            return None
+        return {
+            "id": row[0],
+            "firstName": row[1],
+            "lastName": row[2],
+            "email": row[3],
+            "isActive": bool(row[4]),
+            "createdAtUtc": row[5].isoformat() if row[5] else None,
+        }
+    finally:
+        conn.close()
+
+
+def set_verify_token(user_id: int, token: str, expiry_utc) -> None:
+    """Store an email-verification token and its expiry on the given user."""
+    conn = _conn()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "UPDATE dbo.Users SET VerifyToken = ?, VerifyTokenExpiry = ? WHERE Id = ?",
+            token, expiry_utc, user_id,
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def get_user_by_verify_token(token: str) -> dict | None:
+    """Return the user whose VerifyToken matches and has not yet expired, or None."""
+    conn = _conn()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            """SELECT Id, FirstName, LastName, Email, ISNULL(EmailVerified, 0),
+                      VerifyTokenExpiry
+               FROM dbo.Users
+               WHERE VerifyToken = ? AND VerifyTokenExpiry > GETUTCDATE()""",
+            token,
+        )
+        row = cur.fetchone()
+        if not row:
+            return None
+        return {
+            "id": row[0],
+            "firstName": row[1],
+            "lastName": row[2],
+            "email": row[3],
+            "emailVerified": bool(row[4]),
+            "verifyTokenExpiry": row[5].isoformat() if row[5] else None,
+        }
+    finally:
+        conn.close()
+
+
+def mark_email_verified(user_id: int) -> None:
+    """Set EmailVerified = 1, record the timestamp, and clear the token."""
+    conn = _conn()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            """UPDATE dbo.Users
+               SET EmailVerified = 1,
+                   EmailVerifiedAt = GETUTCDATE(),
+                   VerifyToken = NULL,
+                   VerifyTokenExpiry = NULL
+               WHERE Id = ?""",
+            user_id,
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def get_verify_token_issued_at(user_id: int):
+    """Return VerifyTokenExpiry for rate-limiting resend requests, or None."""
+    conn = _conn()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT VerifyTokenExpiry FROM dbo.Users WHERE Id = ?",
+            user_id,
+        )
+        row = cur.fetchone()
+        return row[0] if row else None
+    finally:
+        conn.close()
 
 
 def reset_orphaned_jobs(stale_seconds: int = 600) -> int:
@@ -534,6 +833,78 @@ def get_scan_history(limit: int = 500):
         conn.close()
 
 
+_SCAN_SCORE_WEIGHTS = {'critical': 10, 'serious': 5, 'moderate': 2, 'minor': 1}
+
+
+def _compute_scan_score(result: dict) -> int:
+    violations = ((result or {}).get('axeResult') or {}).get('violations') or []
+    penalty = 0
+    for v in violations:
+        w = _SCAN_SCORE_WEIGHTS.get((v.get('impact') or 'minor').lower(), 1)
+        nodes = v.get('nodes') or []
+        penalty += (len(nodes) if nodes else 1) * w
+    return max(0, min(100, round(100 - penalty)))
+
+
+def get_prev_scan_summary_for_url(url: str) -> dict | None:
+    """
+    Return the most recent *previous* scan summary for a URL.
+    Fetches the two most recent scans for the URL (across http/https and
+    trailing-slash variants); the second row is the previous scan.
+    Returns None when fewer than two scans exist for this URL.
+    """
+    from urllib.parse import urlparse
+    url = (url or '').strip()
+    try:
+        p = urlparse(url)
+        host_path = p.netloc.lower() + p.path.lower().rstrip('/')
+    except Exception:
+        host_path = url.lower().rstrip('/')
+
+    url_http  = 'http://'  + host_path
+    url_https = 'https://' + host_path
+    variants = (url_http, url_http + '/', url_https, url_https + '/')
+    placeholders = ','.join(['?'] * len(variants))
+
+    conn = _conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                f"""
+                SELECT TOP 2 Id, Url, TimestampUtc, Violations, ResultPayload
+                FROM dbo.ScanHistory
+                WHERE LOWER(Url) IN ({placeholders})
+                ORDER BY TimestampUtc DESC
+                """,
+                variants,
+            )
+            rows = cur.fetchall()
+
+        if len(rows) < 2:
+            return None
+
+        prev = rows[1]
+        ts = prev.TimestampUtc
+        if hasattr(ts, 'isoformat'):
+            ts = ts.isoformat()
+
+        score = 0
+        try:
+            if prev.ResultPayload:
+                score = _compute_scan_score(json.loads(prev.ResultPayload))
+        except Exception:
+            pass
+
+        return {
+            'score': score,
+            'totalViolations': prev.Violations or 0,
+            'url': prev.Url or '',
+            'timestamp': ts,
+        }
+    finally:
+        conn.close()
+
+
 # ── Trend aggregation ─────────────────────────────────────────────────────────
 
 _TREND_SQL: dict[str, str] = {
@@ -731,6 +1102,19 @@ def update_crawl_job_status(
         conn.close()
 
 
+def get_crawl_job_status(crawl_id: str) -> str | None:
+    if not is_enabled() or _INIT_ERROR:
+        return None
+    conn = _conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT Status FROM dbo.CrawlJob WHERE CrawlId = ?", (crawl_id,))
+            row = cur.fetchone()
+            return row.Status if row else None
+    finally:
+        conn.close()
+
+
 def update_crawl_job_progress(
     crawl_id: str,
     total_discovered: int | None = None,
@@ -778,6 +1162,12 @@ def get_crawl_job(crawl_id: str) -> dict | None:
             row = cur.fetchone()
         if not row:
             return None
+        meta = {}
+        try:
+            if row.Metadata:
+                meta = json.loads(row.Metadata)
+        except Exception:
+            pass
         return {
             "crawl_id": row.CrawlId,
             "rq_job_id": row.RQJobId,
@@ -794,6 +1184,9 @@ def get_crawl_job(crawl_id: str) -> dict | None:
             "duration_seconds": row.DurationSeconds,
             "failure_reason": row.FailureReason,
             "notify_email": row.NotifyEmail,
+            "site_score": meta.get("site_score"),
+            "avg_pass_rate": meta.get("avg_pass_rate"),
+            "total_violations": meta.get("total_violations"),
         }
     finally:
         conn.close()
@@ -842,6 +1235,7 @@ def update_crawl_page(
     scan_history_id: int | None = None,
     scanned_at: str | None = None,
     failure_reason: str | None = None,
+    result_payload: str | None = None,
 ) -> None:
     if not is_enabled() or _INIT_ERROR or page_id < 0:
         return
@@ -865,6 +1259,9 @@ def update_crawl_page(
     if failure_reason is not None:
         updates.append("FailureReason = ?")
         params.append(failure_reason)
+    if result_payload is not None:
+        updates.append("ResultPayload = ?")
+        params.append(result_payload)
     params.append(page_id)
     conn = _conn()
     try:
@@ -935,15 +1332,22 @@ def get_all_crawl_jobs(limit: int = 25) -> list[dict]:
                 """
                 SELECT TOP (?) CrawlId, RootUrl, Status,
                                TotalScanned, TotalFailed,
-                               CreatedAt, EndedAt, DurationSeconds
+                               CreatedAt, EndedAt, DurationSeconds, Metadata
                 FROM dbo.CrawlJob
                 ORDER BY CreatedAt DESC
                 """,
                 (limit,),
             )
             rows = cur.fetchall()
-        return [
-            {
+        result = []
+        for r in rows:
+            meta = {}
+            try:
+                if r.Metadata:
+                    meta = json.loads(r.Metadata)
+            except Exception:
+                pass
+            result.append({
                 "crawl_id": r.CrawlId,
                 "root_url": r.RootUrl or "",
                 "status": r.Status or "unknown",
@@ -952,11 +1356,55 @@ def get_all_crawl_jobs(limit: int = 25) -> list[dict]:
                 "created_at": _ts(r.CreatedAt),
                 "ended_at": _ts(r.EndedAt),
                 "duration_seconds": float(r.DurationSeconds) if r.DurationSeconds is not None else None,
-            }
-            for r in rows
-        ]
+                "site_score": meta.get("site_score"),
+                "avg_pass_rate": meta.get("avg_pass_rate"),
+                "total_violations": meta.get("total_violations"),
+            })
+        return result
     finally:
         conn.close()
+
+
+def finalize_crawl_summary(crawl_id: str) -> dict:
+    """
+    Compute aggregate metrics from CrawlPage rows at crawl completion and
+    store them in CrawlJob.Metadata for fast retrieval in the history list.
+
+    Returns {"avg_pass_rate": int|None, "total_violations": int, "site_score": int|None}.
+    Safe to call when DB is unavailable — returns empty summary without raising.
+    """
+    summary: dict = {"avg_pass_rate": None, "total_violations": 0, "site_score": None}
+    if not is_enabled() or _INIT_ERROR:
+        return summary
+    conn = _conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT AVG(CAST(PassRate AS FLOAT)), SUM(Violations)
+                FROM dbo.CrawlPage
+                WHERE CrawlId = ? AND Status = 'scanned'
+                """,
+                (crawl_id,),
+            )
+            row = cur.fetchone()
+            avg_pass_rate = round(row[0]) if row and row[0] is not None else None
+            total_violations = int(row[1]) if row and row[1] is not None else 0
+            summary = {
+                "avg_pass_rate": avg_pass_rate,
+                "total_violations": total_violations,
+                "site_score": avg_pass_rate,
+            }
+            cur.execute(
+                "UPDATE dbo.CrawlJob SET Metadata = ? WHERE CrawlId = ?",
+                (json.dumps(summary), crawl_id),
+            )
+        conn.commit()
+    except Exception as exc:
+        logger.warning("finalize_crawl_summary failed | crawl_id=%s err=%s", crawl_id, exc)
+    finally:
+        conn.close()
+    return summary
 
 
 # ── Violation intelligence ─────────────────────────────────────────────────────
@@ -1091,5 +1539,1037 @@ def get_regression_candidates() -> list[dict]:
             }
             for row in rows
         ]
+    finally:
+        conn.close()
+
+
+# ── Crawl analytics ────────────────────────────────────────────────────────────
+
+import re as _re
+
+_WCAG_PRINCIPLE_MAP = {'1': 'Perceivable', '2': 'Operable', '3': 'Understandable', '4': 'Robust'}
+
+_WCAG_CRITERION_NAMES = {
+    '1.1.1': 'Non-text Content',    '1.2.1': 'Audio-only & Video-only',
+    '1.2.2': 'Captions',            '1.3.1': 'Info and Relationships',
+    '1.3.2': 'Meaningful Sequence', '1.3.3': 'Sensory Characteristics',
+    '1.4.1': 'Use of Color',        '1.4.2': 'Audio Control',
+    '1.4.3': 'Contrast (Minimum)',  '1.4.4': 'Resize Text',
+    '1.4.5': 'Images of Text',      '2.1.1': 'Keyboard',
+    '2.1.2': 'No Keyboard Trap',    '2.2.1': 'Timing Adjustable',
+    '2.2.2': 'Pause, Stop, Hide',   '2.3.1': 'Three Flashes',
+    '2.4.1': 'Bypass Blocks',       '2.4.2': 'Page Titled',
+    '2.4.3': 'Focus Order',         '2.4.4': 'Link Purpose',
+    '2.4.6': 'Headings and Labels', '2.4.7': 'Focus Visible',
+    '3.1.1': 'Language of Page',    '3.1.2': 'Language of Parts',
+    '3.2.1': 'On Focus',            '3.2.2': 'On Input',
+    '3.3.1': 'Error Identification', '3.3.2': 'Labels or Instructions',
+    '4.1.1': 'Parsing',             '4.1.2': 'Name, Role, Value',
+    '4.1.3': 'Status Messages',
+}
+
+
+def _wcag_tag_to_criterion(tag: str):
+    """'wcag111' -> '1.1.1', 'wcag243' -> '2.4.3'. None for non-criterion tags."""
+    m = _re.match(r'^wcag(\d)(\d)(\d)$', tag.lower())
+    if m:
+        return f'{m.group(1)}.{m.group(2)}.{m.group(3)}'
+    return None
+
+
+def get_crawl_violation_intel(crawl_id: str) -> dict:
+    """
+    Aggregate WCAG + severity + top-issue intelligence for a specific crawl.
+    Parses ScanHistory.ResultPayload rows linked via CrawlPage.ScanHistoryId.
+    """
+    empty: dict = {
+        "severity_breakdown": {"critical": 0, "serious": 0, "moderate": 0, "minor": 0},
+        "top_issue_types": [],
+        "wcag_breakdown": [],
+        "wcag_principles": {"Perceivable": 0, "Operable": 0, "Understandable": 0, "Robust": 0},
+    }
+    if not is_enabled() or _INIT_ERROR:
+        return empty
+
+    conn = _conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT cp.ResultPayload, cp.Url
+                FROM dbo.CrawlPage cp
+                WHERE cp.CrawlId = ? AND cp.Status = 'scanned'
+                  AND cp.ResultPayload IS NOT NULL
+
+                UNION ALL
+
+                SELECT sh.ResultPayload, cp.Url
+                FROM dbo.CrawlPage cp
+                JOIN dbo.ScanHistory sh ON sh.Id = cp.ScanHistoryId
+                WHERE cp.CrawlId = ? AND cp.Status = 'scanned'
+                  AND cp.ResultPayload IS NULL
+                  AND cp.ScanHistoryId IS NOT NULL
+                  AND sh.ResultPayload IS NOT NULL
+                """,
+                (crawl_id, crawl_id),
+            )
+            rows = cur.fetchall()
+    finally:
+        conn.close()
+
+    severity: dict[str, int] = {"critical": 0, "serious": 0, "moderate": 0, "minor": 0}
+    rule_counts: dict[str, int] = {}
+    rule_pages: dict[str, set] = {}
+    criterion_counts: dict[str, int] = {}
+    principle_counts: dict[str, int] = {p: 0 for p in _WCAG_PRINCIPLE_MAP.values()}
+
+    for row in rows:
+        try:
+            payload = json.loads(row[0]) if row[0] else None
+        except (json.JSONDecodeError, TypeError):
+            continue
+        if not isinstance(payload, dict):
+            continue
+        axe = payload.get("axeResult") or {}
+        page_url = row[1] or (axe.get("url") or "")
+        if not isinstance(axe, dict):
+            continue
+        for v in (axe.get("violations") or []):
+            if not isinstance(v, dict):
+                continue
+            impact = (v.get("impact") or "minor").lower()
+            if impact not in severity:
+                impact = "minor"
+            node_count = max(len(v.get("nodes") or []), 1)
+            severity[impact] += node_count
+
+            rule_id = v.get("id") or "unknown"
+            rule_counts[rule_id] = rule_counts.get(rule_id, 0) + node_count
+            rule_pages.setdefault(rule_id, set()).add(page_url)
+
+            for tag in (v.get("tags") or []):
+                if not isinstance(tag, str):
+                    continue
+                criterion = _wcag_tag_to_criterion(tag)
+                if criterion:
+                    criterion_counts[criterion] = criterion_counts.get(criterion, 0) + node_count
+                    principle = _WCAG_PRINCIPLE_MAP.get(criterion[0])
+                    if principle:
+                        principle_counts[principle] = principle_counts.get(principle, 0) + node_count
+
+    top_issue_types = sorted(
+        [{"rule_id": k, "count": v, "affected_pages": len(rule_pages.get(k, set()))}
+         for k, v in rule_counts.items()],
+        key=lambda x: x["count"],
+        reverse=True,
+    )[:10]
+
+    wcag_breakdown = sorted(
+        [{
+            "criterion": k,
+            "name": _WCAG_CRITERION_NAMES.get(k, k),
+            "principle": _WCAG_PRINCIPLE_MAP.get(k[0], "Unknown"),
+            "count": v,
+        } for k, v in criterion_counts.items()],
+        key=lambda x: x["count"],
+        reverse=True,
+    )[:15]
+
+    return {
+        "severity_breakdown": severity,
+        "top_issue_types": top_issue_types,
+        "wcag_breakdown": wcag_breakdown,
+        "wcag_principles": principle_counts,
+    }
+
+
+def get_crawl_regressions(crawl_id: str) -> dict:
+    """
+    Compare pages in crawl_id against the most recent previous completed crawl for
+    the same root URL. Returns regressions, improvements, and new/removed pages.
+    """
+    empty: dict = {
+        "previous_crawl_id": None, "previous_crawl_date": None,
+        "has_comparison": False,
+        "regressions": [], "improvements": [], "new_pages": [], "removed_pages": [],
+    }
+    if not is_enabled() or _INIT_ERROR:
+        return empty
+
+    conn = _conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT RootUrl, CreatedAt FROM dbo.CrawlJob WHERE CrawlId = ?",
+                (crawl_id,),
+            )
+            row = cur.fetchone()
+            if not row:
+                return empty
+            root_url, created_at = row[0], row[1]
+
+            cur.execute(
+                """
+                SELECT TOP 1 CrawlId, CreatedAt FROM dbo.CrawlJob
+                WHERE RootUrl = ? AND Status = 'completed' AND CrawlId != ? AND CreatedAt < ?
+                ORDER BY CreatedAt DESC
+                """,
+                (root_url, crawl_id, created_at),
+            )
+            prev = cur.fetchone()
+            if not prev:
+                return {**empty, "has_comparison": False}
+
+            prev_crawl_id, prev_created_at = prev[0], prev[1]
+
+            cur.execute(
+                """
+                SELECT curr.Url, ISNULL(curr.Violations, 0) AS CurrViol, prev.Violations AS PrevViol
+                FROM dbo.CrawlPage curr
+                LEFT JOIN dbo.CrawlPage prev
+                    ON curr.NormalizedUrl = prev.NormalizedUrl AND prev.CrawlId = ?
+                WHERE curr.CrawlId = ? AND curr.Status = 'scanned'
+                """,
+                (prev_crawl_id, crawl_id),
+            )
+            curr_rows = cur.fetchall()
+
+            cur.execute(
+                """
+                SELECT prev.Url, ISNULL(prev.Violations, 0)
+                FROM dbo.CrawlPage prev
+                WHERE prev.CrawlId = ? AND prev.Status = 'scanned'
+                  AND NOT EXISTS (
+                      SELECT 1 FROM dbo.CrawlPage curr
+                      WHERE curr.CrawlId = ? AND curr.NormalizedUrl = prev.NormalizedUrl
+                  )
+                """,
+                (prev_crawl_id, crawl_id),
+            )
+            removed_rows = cur.fetchall()
+    finally:
+        conn.close()
+
+    regressions, improvements, new_pages = [], [], []
+    for r in curr_rows:
+        curr_viol = int(r[1] or 0)
+        if r[2] is None:
+            new_pages.append({"url": r[0], "violations": curr_viol})
+        else:
+            prev_viol = int(r[2])
+            delta = curr_viol - prev_viol
+            entry = {"url": r[0], "previous_violations": prev_viol,
+                     "current_violations": curr_viol, "delta": delta}
+            if delta > 0:
+                regressions.append(entry)
+            elif delta < 0:
+                improvements.append(entry)
+
+    regressions.sort(key=lambda x: x["delta"], reverse=True)
+    improvements.sort(key=lambda x: x["delta"])
+
+    return {
+        "previous_crawl_id": prev_crawl_id,
+        "previous_crawl_date": _ts(prev_created_at),
+        "has_comparison": True,
+        "regressions": regressions[:25],
+        "improvements": improvements[:25],
+        "new_pages": new_pages[:25],
+        "removed_pages": [{"url": r[0], "previous_violations": int(r[1] or 0)} for r in removed_rows][:25],
+    }
+
+
+def compare_crawls(crawl_id_a: str, crawl_id_b: str) -> dict | None:
+    """
+    Side-by-side comparison of two crawl runs: job metadata, page-level diffs, summary.
+    Returns None if either crawl_id is not found.
+    """
+    if not is_enabled() or _INIT_ERROR:
+        return None
+
+    conn = _conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT CrawlId, RootUrl, Status, CreatedAt, TotalScanned, TotalFailed,
+                       DurationSeconds, Metadata
+                FROM dbo.CrawlJob
+                WHERE CrawlId IN (?, ?)
+                """,
+                (crawl_id_a, crawl_id_b),
+            )
+            job_map = {r[0]: r for r in cur.fetchall()}
+
+            if crawl_id_a not in job_map or crawl_id_b not in job_map:
+                return None
+
+            def _parse_job(cid):
+                r = job_map[cid]
+                meta = {}
+                try:
+                    if r[7]:
+                        meta = json.loads(r[7])
+                except Exception:
+                    pass
+                return {
+                    "crawl_id": r[0], "root_url": r[1], "status": r[2],
+                    "created_at": _ts(r[3]),
+                    "total_scanned": int(r[4] or 0), "total_failed": int(r[5] or 0),
+                    "duration_seconds": float(r[6]) if r[6] is not None else None,
+                    "site_score": meta.get("site_score"),
+                    "avg_pass_rate": meta.get("avg_pass_rate"),
+                    "total_violations": meta.get("total_violations"),
+                }
+
+            job_a = _parse_job(crawl_id_a)
+            job_b = _parse_job(crawl_id_b)
+
+            cur.execute(
+                """
+                SELECT CrawlId, NormalizedUrl, Url, ISNULL(Violations, 0), PassRate
+                FROM dbo.CrawlPage
+                WHERE CrawlId IN (?, ?) AND Status = 'scanned'
+                """,
+                (crawl_id_a, crawl_id_b),
+            )
+            page_rows = cur.fetchall()
+    finally:
+        conn.close()
+
+    pages_a: dict[str, dict] = {}
+    pages_b: dict[str, dict] = {}
+    for r in page_rows:
+        entry = {"url": r[2], "violations": int(r[3] or 0), "pass_rate": r[4]}
+        (pages_a if r[0] == crawl_id_a else pages_b)[r[1]] = entry
+
+    improved, regressed, unchanged, only_a, only_b = [], [], [], [], []
+    for norm_url in set(pages_a) | set(pages_b):
+        pa, pb = pages_a.get(norm_url), pages_b.get(norm_url)
+        if pa and pb:
+            delta = pb["violations"] - pa["violations"]
+            e = {"url": pa["url"] or pb["url"],
+                 "violations_a": pa["violations"], "violations_b": pb["violations"], "delta": delta}
+            (regressed if delta > 0 else improved if delta < 0 else unchanged).append(e)
+        elif pa:
+            only_a.append({"url": pa["url"], "violations": pa["violations"]})
+        else:
+            only_b.append({"url": pb["url"], "violations": pb["violations"]})
+
+    regressed.sort(key=lambda x: x["delta"], reverse=True)
+    improved.sort(key=lambda x: x["delta"])
+
+    def _d(a, b):
+        return (b - a) if (a is not None and b is not None) else None
+
+    return {
+        "crawl_a": job_a, "crawl_b": job_b,
+        "summary": {
+            "score_delta": _d(job_a["site_score"], job_b["site_score"]),
+            "pass_rate_delta": _d(job_a["avg_pass_rate"], job_b["avg_pass_rate"]),
+            "violations_delta": _d(job_a["total_violations"], job_b["total_violations"]),
+            "pages_improved": len(improved), "pages_regressed": len(regressed),
+            "pages_unchanged": len(unchanged),
+            "pages_only_in_a": len(only_a), "pages_only_in_b": len(only_b),
+        },
+        "regressed": regressed[:15],
+        "improved": improved[:15],
+        "only_in_a": only_a[:10],
+        "only_in_b": only_b[:10],
+    }
+
+
+def get_crawl_score_timeline(root_url: str, limit: int = 20) -> list[dict]:
+    """Return score history for all completed crawls of root_url, oldest first."""
+    if not is_enabled() or _INIT_ERROR:
+        return []
+    conn = _conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT TOP (?) CrawlId, CreatedAt, TotalScanned, DurationSeconds, Metadata
+                FROM dbo.CrawlJob
+                WHERE RootUrl = ? AND Status = 'completed'
+                ORDER BY CreatedAt ASC
+                """,
+                (limit, root_url),
+            )
+            rows = cur.fetchall()
+        out = []
+        for r in rows:
+            meta = {}
+            try:
+                if r[4]:
+                    meta = json.loads(r[4])
+            except Exception:
+                pass
+            out.append({
+                "crawl_id": r[0],
+                "created_at": _ts(r[1]),
+                "total_scanned": int(r[2] or 0),
+                "duration_seconds": float(r[3]) if r[3] is not None else None,
+                "site_score": meta.get("site_score"),
+                "avg_pass_rate": meta.get("avg_pass_rate"),
+                "total_violations": meta.get("total_violations"),
+            })
+        return out
+    finally:
+        conn.close()
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Phase 3 — CrawlSchedule
+# ═══════════════════════════════════════════════════════════════════════════
+
+def _compute_next_run(frequency: str, from_dt=None):
+    from datetime import timezone, timedelta
+    now = from_dt or datetime.now(timezone.utc)
+    if frequency == "daily":
+        return now + timedelta(days=1)
+    elif frequency == "monthly":
+        return now + timedelta(days=30)
+    return now + timedelta(weeks=1)
+
+
+def create_crawl_schedule(root_url: str, frequency: str = "weekly") -> dict | None:
+    if not is_enabled() or _INIT_ERROR:
+        return None
+    frequency = frequency if frequency in ("daily", "weekly", "monthly") else "weekly"
+    next_run = _compute_next_run(frequency)
+    conn = _conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO dbo.CrawlSchedule (RootUrl, Frequency, Enabled, NextRunAt)
+                OUTPUT INSERTED.Id, INSERTED.CreatedAt
+                VALUES (?, ?, 1, ?)
+                """,
+                (root_url, frequency, next_run),
+            )
+            row = cur.fetchone()
+            conn.commit()
+        return {
+            "id": row[0],
+            "root_url": root_url,
+            "frequency": frequency,
+            "enabled": True,
+            "last_run_at": None,
+            "next_run_at": _ts(next_run),
+            "created_at": _ts(row[1]),
+        }
+    finally:
+        conn.close()
+
+
+def get_crawl_schedules() -> list[dict]:
+    if not is_enabled() or _INIT_ERROR:
+        return []
+    conn = _conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT Id, RootUrl, Frequency, Enabled, LastRunAt, NextRunAt, CreatedAt
+                FROM dbo.CrawlSchedule
+                ORDER BY CreatedAt DESC
+                """
+            )
+            rows = cur.fetchall()
+        return [
+            {
+                "id": r[0],
+                "root_url": r[1],
+                "frequency": r[2],
+                "enabled": bool(r[3]),
+                "last_run_at": _ts(r[4]),
+                "next_run_at": _ts(r[5]),
+                "created_at": _ts(r[6]),
+            }
+            for r in rows
+        ]
+    finally:
+        conn.close()
+
+
+def get_due_schedules() -> list[dict]:
+    """Return enabled schedules whose NextRunAt is in the past."""
+    if not is_enabled() or _INIT_ERROR:
+        return []
+    conn = _conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT Id, RootUrl, Frequency
+                FROM dbo.CrawlSchedule
+                WHERE Enabled = 1 AND NextRunAt <= GETUTCDATE()
+                """
+            )
+            rows = cur.fetchall()
+        return [{"id": r[0], "root_url": r[1], "frequency": r[2]} for r in rows]
+    finally:
+        conn.close()
+
+
+def mark_schedule_ran(schedule_id: int, frequency: str) -> bool:
+    if not is_enabled() or _INIT_ERROR:
+        return False
+    next_run = _compute_next_run(frequency)
+    conn = _conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE dbo.CrawlSchedule
+                SET LastRunAt = GETUTCDATE(), NextRunAt = ?, UpdatedAt = GETUTCDATE()
+                WHERE Id = ?
+                """,
+                (next_run, schedule_id),
+            )
+            conn.commit()
+        return True
+    except Exception:
+        logger.exception("mark_schedule_ran failed for id=%s", schedule_id)
+        return False
+    finally:
+        conn.close()
+
+
+def update_crawl_schedule(schedule_id: int, **kwargs) -> bool:
+    """Update Enabled and/or Frequency for a schedule."""
+    if not is_enabled() or _INIT_ERROR:
+        return False
+    allowed = {}
+    if "enabled" in kwargs:
+        allowed["Enabled"] = 1 if kwargs["enabled"] else 0
+    if "frequency" in kwargs:
+        freq = kwargs["frequency"]
+        if freq in ("daily", "weekly", "monthly"):
+            allowed["Frequency"] = freq
+            allowed["NextRunAt"] = _compute_next_run(freq)
+    if not allowed:
+        return False
+    set_parts = ", ".join(f"{k} = ?" for k in allowed)
+    values = list(allowed.values()) + [schedule_id]
+    conn = _conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                f"UPDATE dbo.CrawlSchedule SET {set_parts}, UpdatedAt = GETUTCDATE() WHERE Id = ?",
+                values,
+            )
+            conn.commit()
+        return True
+    except Exception:
+        logger.exception("update_crawl_schedule failed for id=%s", schedule_id)
+        return False
+    finally:
+        conn.close()
+
+
+def delete_crawl_schedule(schedule_id: int) -> bool:
+    if not is_enabled() or _INIT_ERROR:
+        return False
+    conn = _conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM dbo.CrawlSchedule WHERE Id = ?", (schedule_id,))
+            conn.commit()
+        return True
+    except Exception:
+        logger.exception("delete_crawl_schedule failed for id=%s", schedule_id)
+        return False
+    finally:
+        conn.close()
+
+
+def has_active_crawl_for_url(root_url: str) -> bool:
+    """Return True if a crawl is currently running or pending for root_url."""
+    if not is_enabled() or _INIT_ERROR:
+        return False
+    conn = _conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT COUNT(1) FROM dbo.CrawlJob
+                WHERE RootUrl = ? AND Status IN ('pending', 'running')
+                """,
+                (root_url,),
+            )
+            row = cur.fetchone()
+        return (row[0] if row else 0) > 0
+    finally:
+        conn.close()
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Phase 3 — AI Summary (stored in CrawlJob.Metadata)
+# ═══════════════════════════════════════════════════════════════════════════
+
+def get_crawl_ai_summary(crawl_id: str) -> str | None:
+    """Return the stored AI summary text for a crawl, or None."""
+    if not is_enabled() or _INIT_ERROR:
+        return None
+    conn = _conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT Metadata FROM dbo.CrawlJob WHERE CrawlId = ?", (crawl_id,))
+            row = cur.fetchone()
+        if not row or not row[0]:
+            return None
+        meta = json.loads(row[0])
+        return meta.get("ai_summary")
+    except Exception:
+        return None
+    finally:
+        conn.close()
+
+
+def set_crawl_ai_summary(crawl_id: str, summary_text: str) -> bool:
+    """Merge ai_summary into CrawlJob.Metadata JSON."""
+    if not is_enabled() or _INIT_ERROR:
+        return False
+    conn = _conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT Metadata FROM dbo.CrawlJob WHERE CrawlId = ?", (crawl_id,))
+            row = cur.fetchone()
+            meta = {}
+            if row and row[0]:
+                try:
+                    meta = json.loads(row[0])
+                except Exception:
+                    pass
+            meta["ai_summary"] = summary_text
+            cur.execute(
+                "UPDATE dbo.CrawlJob SET Metadata = ? WHERE CrawlId = ?",
+                (json.dumps(meta), crawl_id),
+            )
+            conn.commit()
+        return True
+    except Exception:
+        logger.exception("set_crawl_ai_summary failed for crawl_id=%s", crawl_id)
+        return False
+    finally:
+        conn.close()
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Phase 3 — AccessibilityAlert
+# ═══════════════════════════════════════════════════════════════════════════
+
+def create_alert(crawl_id: str, root_url: str, alert_type: str, severity: str, details: dict) -> int | None:
+    if not is_enabled() or _INIT_ERROR:
+        return None
+    conn = _conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO dbo.AccessibilityAlert (CrawlId, RootUrl, AlertType, Severity, Details)
+                OUTPUT INSERTED.Id
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (crawl_id, root_url, alert_type, severity, json.dumps(details)),
+            )
+            row = cur.fetchone()
+            conn.commit()
+        return row[0] if row else None
+    except Exception:
+        logger.exception("create_alert failed for crawl_id=%s", crawl_id)
+        return None
+    finally:
+        conn.close()
+
+
+def get_alerts(status: str | None = None, limit: int = 50) -> list[dict]:
+    if not is_enabled() or _INIT_ERROR:
+        return []
+    conn = _conn()
+    try:
+        with conn.cursor() as cur:
+            if status:
+                cur.execute(
+                    f"""
+                    SELECT TOP (?) Id, CrawlId, RootUrl, AlertType, Severity, Details, Status, CreatedAt
+                    FROM dbo.AccessibilityAlert WHERE Status = ? ORDER BY CreatedAt DESC
+                    """,
+                    (limit, status),
+                )
+            else:
+                cur.execute(
+                    f"""
+                    SELECT TOP (?) Id, CrawlId, RootUrl, AlertType, Severity, Details, Status, CreatedAt
+                    FROM dbo.AccessibilityAlert ORDER BY CreatedAt DESC
+                    """,
+                    (limit,),
+                )
+            rows = cur.fetchall()
+        out = []
+        for r in rows:
+            details = {}
+            try:
+                if r[5]:
+                    details = json.loads(r[5])
+            except Exception:
+                pass
+            out.append({
+                "id": r[0],
+                "crawl_id": r[1],
+                "root_url": r[2],
+                "alert_type": r[3],
+                "severity": r[4],
+                "details": details,
+                "status": r[6],
+                "created_at": _ts(r[7]),
+            })
+        return out
+    finally:
+        conn.close()
+
+
+def acknowledge_alert(alert_id: int) -> bool:
+    if not is_enabled() or _INIT_ERROR:
+        return False
+    conn = _conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "UPDATE dbo.AccessibilityAlert SET Status = 'acknowledged' WHERE Id = ?",
+                (alert_id,),
+            )
+            conn.commit()
+        return True
+    except Exception:
+        return False
+    finally:
+        conn.close()
+
+
+def get_unacknowledged_alert_count() -> int:
+    if not is_enabled() or _INIT_ERROR:
+        return 0
+    conn = _conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT COUNT(1) FROM dbo.AccessibilityAlert WHERE Status = 'active'")
+            row = cur.fetchone()
+        return int(row[0]) if row else 0
+    finally:
+        conn.close()
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Phase 3 — DigestHistory
+# ═══════════════════════════════════════════════════════════════════════════
+
+def create_digest(week_start, week_end, digest_data: dict) -> int | None:
+    if not is_enabled() or _INIT_ERROR:
+        return None
+    conn = _conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO dbo.DigestHistory (WeekStart, WeekEnd, DigestData)
+                OUTPUT INSERTED.Id
+                VALUES (?, ?, ?)
+                """,
+                (week_start, week_end, json.dumps(digest_data)),
+            )
+            row = cur.fetchone()
+            conn.commit()
+        return row[0] if row else None
+    except Exception:
+        logger.exception("create_digest failed")
+        return None
+    finally:
+        conn.close()
+
+
+def get_digests(limit: int = 12) -> list[dict]:
+    if not is_enabled() or _INIT_ERROR:
+        return []
+    conn = _conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT TOP (?) Id, WeekStart, WeekEnd, DigestData, SentAt, EmailSentTo, CreatedAt
+                FROM dbo.DigestHistory ORDER BY CreatedAt DESC
+                """,
+                (limit,),
+            )
+            rows = cur.fetchall()
+        out = []
+        for r in rows:
+            data = {}
+            try:
+                if r[3]:
+                    data = json.loads(r[3])
+            except Exception:
+                pass
+            out.append({
+                "id": r[0],
+                "week_start": str(r[1]) if r[1] else None,
+                "week_end": str(r[2]) if r[2] else None,
+                "digest_data": data,
+                "sent_at": _ts(r[4]),
+                "email_sent_to": r[5],
+                "created_at": _ts(r[6]),
+            })
+        return out
+    finally:
+        conn.close()
+
+
+def update_digest_sent(digest_id: int, sent_at, email_sent_to: str) -> bool:
+    if not is_enabled() or _INIT_ERROR:
+        return False
+    conn = _conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "UPDATE dbo.DigestHistory SET SentAt = ?, EmailSentTo = ? WHERE Id = ?",
+                (sent_at, email_sent_to, digest_id),
+            )
+            conn.commit()
+        return True
+    except Exception:
+        return False
+    finally:
+        conn.close()
+
+
+def get_weekly_crawl_data(week_start, week_end) -> list[dict]:
+    """Return completed crawls in the given date range, grouped by root URL."""
+    if not is_enabled() or _INIT_ERROR:
+        return []
+    conn = _conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT RootUrl, COUNT(*) AS CrawlCount, Metadata, MAX(CreatedAt) AS LastRun
+                FROM dbo.CrawlJob
+                WHERE Status = 'completed'
+                  AND CreatedAt >= ? AND CreatedAt <= ?
+                GROUP BY RootUrl, Metadata
+                ORDER BY MAX(CreatedAt) DESC
+                """,
+                (week_start, week_end),
+            )
+            rows = cur.fetchall()
+        out = []
+        for r in rows:
+            meta = {}
+            try:
+                if r[2]:
+                    meta = json.loads(r[2])
+            except Exception:
+                pass
+            out.append({
+                "root_url": r[0],
+                "crawl_count": int(r[1]),
+                "site_score": meta.get("site_score"),
+                "avg_pass_rate": meta.get("avg_pass_rate"),
+                "total_violations": meta.get("total_violations"),
+                "last_run": _ts(r[3]),
+            })
+        return out
+    finally:
+        conn.close()
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Phase 3 — Page Trends (most improved / most regressed)
+# ═══════════════════════════════════════════════════════════════════════════
+
+def get_page_trends(crawl_id: str) -> dict:
+    """
+    Compare pages in crawl_id against the previous completed crawl for the same root URL.
+    Returns most_improved and most_regressed ranked lists.
+    """
+    empty = {"has_comparison": False, "most_improved": [], "most_regressed": []}
+    if not is_enabled() or _INIT_ERROR:
+        return empty
+    conn = _conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT RootUrl, CreatedAt FROM dbo.CrawlJob WHERE CrawlId = ?", (crawl_id,))
+            row = cur.fetchone()
+        if not row:
+            return empty
+        root_url, created_at = row[0], row[1]
+
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT TOP 1 CrawlId FROM dbo.CrawlJob
+                WHERE RootUrl = ? AND Status = 'completed'
+                  AND CrawlId != ? AND CreatedAt < ?
+                ORDER BY CreatedAt DESC
+                """,
+                (root_url, crawl_id, created_at),
+            )
+            prev_row = cur.fetchone()
+        if not prev_row:
+            return empty
+        prev_id = prev_row[0]
+
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT cur.Url,
+                       ISNULL(prev.Violations, 0) AS PrevViol,
+                       ISNULL(cur.Violations, 0)  AS CurViol,
+                       ISNULL(prev.PassRate, 0)   AS PrevRate,
+                       ISNULL(cur.PassRate, 0)    AS CurRate
+                FROM dbo.CrawlPage cur
+                JOIN dbo.CrawlPage prev ON prev.NormalizedUrl = cur.NormalizedUrl
+                                       AND prev.CrawlId = ?
+                WHERE cur.CrawlId = ?
+                  AND cur.Status = 'scanned'
+                  AND prev.Status = 'scanned'
+                """,
+                (prev_id, crawl_id),
+            )
+            rows = cur.fetchall()
+
+        pages = [
+            {
+                "url": r[0],
+                "prev_violations": int(r[1] or 0),
+                "curr_violations": int(r[2] or 0),
+                "prev_pass_rate": int(r[3] or 0),
+                "curr_pass_rate": int(r[4] or 0),
+                "violation_delta": int(r[2] or 0) - int(r[1] or 0),
+                "pass_rate_delta": int(r[4] or 0) - int(r[3] or 0),
+            }
+            for r in rows
+        ]
+
+        most_regressed = sorted(
+            [p for p in pages if p["violation_delta"] > 0],
+            key=lambda p: p["violation_delta"],
+            reverse=True,
+        )[:10]
+
+        most_improved = sorted(
+            [p for p in pages if p["violation_delta"] < 0],
+            key=lambda p: p["violation_delta"],
+        )[:10]
+
+        return {
+            "has_comparison": True,
+            "previous_crawl_id": prev_id,
+            "most_improved": most_improved,
+            "most_regressed": most_regressed,
+        }
+    except Exception:
+        logger.exception("get_page_trends failed for crawl_id=%s", crawl_id)
+        return empty
+    finally:
+        conn.close()
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# AssistiveScanHistory
+# ═══════════════════════════════════════════════════════════════════════════
+
+def save_assistive_scan(
+    scan_type: str,
+    url: str,
+    passed: bool,
+    result_payload: dict,
+) -> int | None:
+    """
+    Persist one assistive test run (keyboard or contrast).
+    Returns the auto-assigned Id or None if persistence is disabled.
+    """
+    if not is_enabled() or _INIT_ERROR:
+        return None
+    timestamp = datetime.utcnow().isoformat(timespec="milliseconds") + "Z"
+    payload_json = json.dumps(result_payload) if result_payload else None
+    conn = _conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO dbo.AssistiveScanHistory
+                    (ScanType, Url, TimestampUtc, Passed, ResultPayload)
+                OUTPUT INSERTED.Id
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (scan_type[:50], url[:2048], timestamp, 1 if passed else 0, payload_json),
+            )
+            row = cur.fetchone()
+            new_id = int(row[0]) if row and row[0] is not None else None
+        conn.commit()
+        return new_id
+    except Exception:
+        logger.exception("save_assistive_scan failed | scan_type=%s url=%s", scan_type, url)
+        return None
+    finally:
+        conn.close()
+
+
+def get_assistive_scans(
+    scan_type: str | None = None,
+    url: str | None = None,
+    from_date: str | None = None,
+    to_date: str | None = None,
+    limit: int = 200,
+) -> list[dict]:
+    """
+    Return AssistiveScanHistory rows, newest first.
+    Supports optional filtering by scan_type, url substring, and date range.
+    """
+    if not is_enabled() or _INIT_ERROR:
+        return []
+    conditions = []
+    params: list = []
+    if scan_type:
+        conditions.append("ScanType = ?")
+        params.append(scan_type)
+    if url:
+        conditions.append("Url LIKE ?")
+        params.append(f"%{url}%")
+    if from_date:
+        conditions.append("TimestampUtc >= ?")
+        params.append(from_date)
+    if to_date:
+        conditions.append("TimestampUtc < ?")
+        params.append(to_date)
+    where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+    conn = _conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                f"""
+                SELECT TOP (?) Id, ScanType, Url, TimestampUtc, Passed
+                FROM dbo.AssistiveScanHistory
+                {where}
+                ORDER BY TimestampUtc DESC
+                """,
+                [limit] + params,
+            )
+            rows = cur.fetchall()
+        out = []
+        for r in rows:
+            ts = r.TimestampUtc
+            if hasattr(ts, "isoformat"):
+                ts = ts.isoformat()
+            out.append({
+                "id": r.Id,
+                "scan_type": r.ScanType,
+                "url": r.Url or "",
+                "timestamp": ts,
+                "passed": bool(r.Passed),
+            })
+        return out
     finally:
         conn.close()

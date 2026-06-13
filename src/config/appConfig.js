@@ -3,3 +3,9 @@ export const APP_USER = {
   displayName: 'Sheik',
   email: 'venkatp@unitedtechno.com',
 };
+
+export const BRAND = {
+  productName: 'ADA',
+  productTagline: 'Accessibility Intelligence',
+  companyName: 'United Techno',
+};

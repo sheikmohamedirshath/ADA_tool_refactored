@@ -21,6 +21,9 @@ OUTPUT_JSON = PROJECT_ROOT / "output" / "ada_result.json"
 # Viewport for consistent screenshots; JPEG quality to keep payload size reasonable
 SCREENSHOT_VIEWPORT = {"width": 1280, "height": 800}
 SCREENSHOT_JPEG_QUALITY = 85
+# Each per-violation screenshot costs ~400 ms (Playwright render + JPEG encode).
+# Capping at 10 eliminates the long tail on pages with many violations.
+MAX_VIOLATION_SCREENSHOTS = 10
 
 
 def _selector_from_node_target(target):
@@ -71,11 +74,11 @@ def run_axe_playwright(url: str, include_best_practices: bool = False) -> dict:
         context = browser.new_context(viewport=SCREENSHOT_VIEWPORT, ignore_https_errors=True)
         page = context.new_page()
         try:
-            page.goto(url, wait_until="networkidle", timeout=60000)
+            page.goto(url, wait_until="domcontentloaded", timeout=60000)
         except PlaywrightTimeoutError:
-            # Some complex sites (e.g., large e‑commerce) never go truly \"network idle\".
-            # Proceed with whatever is loaded so far.
             pass
+        # Allow JS-rendered content (SPAs, lazy-loaded regions) to settle before axe runs.
+        page.wait_for_timeout(1000)
         if include_best_practices:
             try:
                 results = axe.run(page, options={"runOnly": {"type": "tag", "values": ["wcag2a", "wcag2aa", "best-practice"]}})
@@ -90,14 +93,16 @@ def run_axe_playwright(url: str, include_best_practices: bool = False) -> dict:
         # Full-page screenshot so user can scroll to see entire page in modal
         full_screenshot_bytes = page.screenshot(type="jpeg", quality=SCREENSHOT_JPEG_QUALITY, full_page=True)
 
-        # Per-violation screenshots with the failing element highlighted (full page so user can scroll).
-        # Performance note: capturing many full-page screenshots is expensive, so we capture only
-        # the primary node per rule (first failing node).
+        # Per-violation screenshots: highlighted viewport capture for the first MAX_VIOLATION_SCREENSHOTS
+        # violations only. Viewport (not full_page) is 5–10× faster; the overview screenshot above
+        # already provides the full-page view. Only the primary node per rule is captured.
         data = results.response if hasattr(results, "response") and results.response else {}
         if not include_best_practices:
             data = _remove_best_practice_rules(data)
         violations = data.get("violations") or []
-        for violation in violations:
+        for i, violation in enumerate(violations):
+            if i >= MAX_VIOLATION_SCREENSHOTS:
+                break
             nodes = violation.get("nodes") or []
             if not nodes:
                 continue
@@ -119,8 +124,7 @@ def run_axe_playwright(url: str, include_best_practices: bool = False) -> dict:
                     el.style.setProperty('z-index', '999999');
                 }"""
                 )
-                # Full-page screenshot so the whole page is visible and user can scroll in the modal
-                shot_bytes = page.screenshot(type="jpeg", quality=SCREENSHOT_JPEG_QUALITY, full_page=True)
+                shot_bytes = page.screenshot(type="jpeg", quality=SCREENSHOT_JPEG_QUALITY, full_page=False)
                 shot_b64 = base64.b64encode(shot_bytes).decode("ascii")
                 # Backwards-compatible violation-level screenshot for existing UI paths
                 violation["screenshot"] = shot_b64

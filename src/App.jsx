@@ -3,17 +3,28 @@ import { AppProvider, useApp } from './context/AppContext'
 import AppSidebar from './components/shell/AppSidebar'
 import AppHeader from './components/shell/AppHeader'
 import LandingPage from './pages/LandingPage'
+import LoginPage from './pages/LoginPage'
+import SignupPage from './pages/SignupPage'
 import DashboardPage from './pages/DashboardPage'
 import CrawlResultsPage from './pages/CrawlResultsPage'
-import KeyboardTestPage from './pages/KeyboardTestPage'
+import CrawlHistoryPage from './pages/CrawlHistoryPage'
+import CrawlSchedulesPage from './pages/CrawlSchedulesPage'
+import AlertsPage from './pages/AlertsPage'
+import DigestHistoryPage from './pages/DigestHistoryPage'
+import ExecutiveSummaryPage from './pages/ExecutiveSummaryPage'
+import AssistiveTestingPage from './pages/AssistiveTestingPage'
 import AIFixPage from './pages/AIFixPage'
 import SettingsPage from './pages/SettingsPage'
 import NewScanPage from './pages/NewScanPage'
 import ScanHistoryView from './components/ScanHistory/ScanHistoryView'
 import ADAResultsView from './components/ADAResultsView/ADAResultsView'
+import VerifyEmailPage from './pages/VerifyEmailPage'
+import WcagReferencePage from './pages/WcagReferencePage'
+
+const PUBLIC_PAGES = new Set(['landing', 'login', 'signup', 'verify-email']);
 
 function AppInner() {
-  const { activePage, dark, setDark, navigate, sidebarOpen, setSidebarOpen, scanHistoryId, setScanHistoryId } = useApp()
+  const { activePage, dark, setDark, navigate, sidebarOpen, setSidebarOpen, scanHistoryId, setScanHistoryId, isAuthenticated } = useApp()
 
   const toggleDark = useCallback(() => {
     setDark((prev) => !prev)
@@ -27,6 +38,22 @@ function AppInner() {
         toggleDark={toggleDark}
       />
     )
+  }
+
+  if (activePage === 'login') {
+    return <LoginPage dark={dark} toggleDark={toggleDark} />
+  }
+
+  if (activePage === 'signup') {
+    return <SignupPage dark={dark} toggleDark={toggleDark} />
+  }
+
+  if (activePage === 'verify-email') {
+    return <VerifyEmailPage dark={dark} toggleDark={toggleDark} />
+  }
+
+  if (!isAuthenticated) {
+    return <LoginPage dark={dark} toggleDark={toggleDark} />
   }
 
   return (
@@ -64,9 +91,16 @@ function AppInner() {
                   onClearResult={() => setScanHistoryId(null)}
                 />
               )}
+            {activePage === 'crawl-history' && <CrawlHistoryPage />}
             {activePage === 'crawl-results' && <CrawlResultsPage />}
-            {activePage === 'keyboard-test' && <KeyboardTestPage />}
+            {activePage === 'crawl-schedules' && <CrawlSchedulesPage />}
+            {activePage === 'alerts' && <AlertsPage />}
+            {activePage === 'digest-history' && <DigestHistoryPage />}
+            {activePage === 'executive-summary' && <ExecutiveSummaryPage />}
+            {activePage === 'keyboard-test' && <AssistiveTestingPage />}
+            {activePage === 'assistive-test' && <AssistiveTestingPage />}
             {activePage === 'ai-fix' && <AIFixPage />}
+            {activePage === 'wcag-reference' && <WcagReferencePage />}
             {activePage === 'settings' && <SettingsPage />}
           </main>
         </div>
