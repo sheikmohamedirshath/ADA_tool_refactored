@@ -9,10 +9,6 @@ import GlowInput from '../components/ui/GlowInput';
 import ScanProgress from '../components/newscan/ScanProgress';
 import './NewScanPage.css';
 import ModuleSelector from '../components/assistive/ModuleSelector';
-import KeyboardNavigationModule from '../components/assistive/KeyboardNavigationModule';
-import ColorContrastModule from '../components/assistive/ColorContrastModule';
-import PageStructureModule from '../components/assistive/PageStructureModule';
-import PlaceholderModule from '../components/assistive/PlaceholderModule';
 
 // ─── Module registry ────────────────────────────────────────────────────────
 // Add new modules here. Set status: 'active' + endpoint when ready to ship.
@@ -44,8 +40,9 @@ const MODULES = [
     id: 'forms',
     label: 'Forms Accessibility',
     icon: FileText,
-    status: 'planned',
-    description: 'Labels, error messages, grouping, autocomplete attributes',
+    status: 'active',
+    description: 'Labels, required fields, autocomplete attributes, fieldset grouping',
+    endpoint: '/api/assisted/forms',
   },
   {
     id: 'interactive',
@@ -101,11 +98,14 @@ function buildResult(rawData, testType, url) {
 
 // ─── Page ────────────────────────────────────────────────────────────────────
 export default function AssistiveTestingPage() {
-  const { pendingAssistiveUrl, setPendingAssistiveUrl, pendingAssistiveModule, setPendingAssistiveModule } = useApp();
+  const {
+    pendingAssistiveUrl, setPendingAssistiveUrl,
+    pendingAssistiveModule, setPendingAssistiveModule,
+    setAssistiveResult, navigate,
+  } = useApp();
   const [activeModuleId, setActiveModuleId] = useState('keyboard');
   const [url, setUrl] = useState('');
   const [loading, setLoading] = useState(false);
-  const [result, setResult] = useState(null);
   const [error, setError] = useState('');
   const [autoRun, setAutoRun] = useState(false);
 
@@ -127,17 +127,10 @@ export default function AssistiveTestingPage() {
       setAutoRun(false);
       handleRunTest();
     }
-  // handleRunTest is stable via useCallback, url is set before autoRun
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [autoRun, url]);
 
   const activeModule = MODULES.find((m) => m.id === activeModuleId);
-
-  function handleModuleSelect(id) {
-    setActiveModuleId(id);
-    setResult(null);
-    setError('');
-  }
 
   const handleRunTest = useCallback(async () => {
     const trimmed = url.trim();
@@ -148,7 +141,6 @@ export default function AssistiveTestingPage() {
     if (!activeModule || activeModule.status !== 'active') return;
 
     setLoading(true);
-    setResult(null);
     setError('');
 
     try {
@@ -161,41 +153,15 @@ export default function AssistiveTestingPage() {
       if (!data.ok) {
         setError(data.error ?? 'Test failed. Please check the URL and try again.');
       } else {
-        setResult(buildResult(data.result ?? data, activeModuleId, trimmed));
+        setAssistiveResult(buildResult(data.result ?? data, activeModuleId, trimmed));
+        navigate('assistive-results');
       }
     } catch {
       setError('Network error. Please check your connection and try again.');
     } finally {
       setLoading(false);
     }
-  }, [url, activeModule, activeModuleId]);
-
-  // ─── Result renderer — dispatches to the correct module component ──────────
-  function renderResults() {
-    if (!result) {
-      const ModIcon = activeModule?.icon;
-      return (
-        <div className="card p-12 flex flex-col items-center justify-center gap-4 text-body dark:text-gray-400">
-          <div className="w-14 h-14 rounded-2xl bg-teal/10 flex items-center justify-center">
-            {ModIcon && <ModIcon size={24} className="text-teal opacity-60" />}
-          </div>
-          <div className="text-center">
-            <p className="font-heading font-semibold text-ink dark:text-white text-base">
-              No results yet
-            </p>
-            <p className="text-sm mt-1">
-              Enter a URL above and run the test to see accessibility insights.
-            </p>
-          </div>
-        </div>
-      );
-    }
-
-    if (activeModuleId === 'keyboard') return <KeyboardNavigationModule result={result} />;
-    if (activeModuleId === 'color-contrast') return <ColorContrastModule result={result} />;
-    if (activeModuleId === 'page-structure') return <PageStructureModule result={result} />;
-    return <PlaceholderModule module={activeModule} />;
-  }
+  }, [url, activeModule, activeModuleId, setAssistiveResult, navigate]);
 
   return (
     <div className="flex-1 overflow-auto bg-ivory dark:bg-night p-6 space-y-6">
@@ -210,36 +176,44 @@ export default function AssistiveTestingPage() {
         </p>
       </div>
 
-      {/* MODULE SELECTOR */}
-      <ModuleSelector
-        modules={MODULES}
-        activeModuleId={activeModuleId}
-        onSelect={handleModuleSelect}
-      />
-
-      {/* URL INPUT — morphs into loader while test runs */}
-      {activeModule?.status === 'active' && (
+      {loading ? (
         <div className="bg-white dark:bg-charcoal rounded-2xl border border-gray-100 dark:border-white/[0.06] shadow-soft">
-          {loading ? (
-            <ScanProgress bare url={url} />
-          ) : (
-            <div className="px-6 py-5">
-              <p className="text-[11px] font-semibold uppercase tracking-widest text-body dark:text-gray-400 mb-3">
-                Enter URL
-              </p>
-              <GlowInput
-                large
-                icon={Search}
-                type="url"
-                value={url}
-                onChange={(e) => setUrl(e.target.value)}
-                onKeyDown={(e) => { if (e.key === 'Enter') handleRunTest(); }}
-                placeholder="https://example.com"
-                aria-label="URL to test"
-              />
+          <ScanProgress bare url={url} />
+        </div>
+      ) : (
+        <>
+          {/* STEP 1 — URL INPUT */}
+          <div className="bg-white dark:bg-charcoal rounded-2xl border border-gray-100 dark:border-white/[0.06] shadow-soft px-6 py-5">
+            <p className="text-[11px] font-semibold uppercase tracking-widest text-body dark:text-gray-400 mb-3">
+              Step 1 — Enter URL
+            </p>
+            <GlowInput
+              large
+              icon={Search}
+              type="url"
+              value={url}
+              onChange={(e) => setUrl(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') handleRunTest(); }}
+              placeholder="https://example.com"
+              aria-label="URL to test"
+            />
+          </div>
 
-              <div className="border-t border-gray-100 dark:border-white/[0.06] my-4" />
+          {/* STEP 2 — MODULE SELECTOR */}
+          <div>
+            <p className="text-[11px] font-semibold uppercase tracking-widest text-body dark:text-gray-400 mb-3 px-1">
+              Step 2 — Select Test
+            </p>
+            <ModuleSelector
+              modules={MODULES}
+              activeModuleId={activeModuleId}
+              onSelect={(id) => { setActiveModuleId(id); setError(''); }}
+            />
+          </div>
 
+          {/* STEP 3 — RUN */}
+          {activeModule?.status === 'active' && (
+            <div>
               <button
                 onClick={handleRunTest}
                 disabled={!url.trim()}
@@ -257,11 +231,8 @@ export default function AssistiveTestingPage() {
               )}
             </div>
           )}
-        </div>
+        </>
       )}
-
-      {/* RESULTS */}
-      {renderResults()}
 
     </div>
   );

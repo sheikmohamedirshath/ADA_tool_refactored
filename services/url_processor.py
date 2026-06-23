@@ -530,3 +530,286 @@ def run_page_structure_assisted_test(url: str) -> dict:
             else f"Found {len(all_issues)} structural issue(s)."
         ),
     }
+
+
+def run_forms_accessibility_test(url: str) -> dict:
+    """
+    Audit form accessibility: labels, required fields, autocomplete, fieldset/legend.
+    Uses Playwright to extract the live DOM state.
+    """
+    url = (url or "").strip()
+    if not url:
+        raise ValueError("URL is required")
+
+    from playwright.sync_api import sync_playwright
+
+    fields = []
+    form_groups = {}
+    page_title = ""
+    errors = []
+
+    try:
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True)
+            context = browser.new_context(viewport={"width": 1366, "height": 768})
+            page = context.new_page()
+            try:
+                page.goto(url, timeout=45000, wait_until="domcontentloaded")
+                page.wait_for_timeout(800)
+                page_title = page.title() or ""
+
+                fields = page.evaluate("""() => {
+                    const AUTOCOMPLETE_MAP = {
+                        name: 'name', email: 'email', tel: 'tel', phone: 'tel',
+                        fname: 'given-name', firstname: 'given-name',
+                        lname: 'family-name', lastname: 'family-name',
+                        address: 'street-address', city: 'address-level2',
+                        zip: 'postal-code', postcode: 'postal-code',
+                        country: 'country', dob: 'bday', birthday: 'bday',
+                        username: 'username', password: 'current-password',
+                        newpassword: 'new-password', cardnumber: 'cc-number',
+                    };
+
+                    function guessToken(el) {
+                        const key = ((el.id || '') + ' ' + (el.name || '') + ' ' +
+                                     Array.from(el.classList).join(' ')).toLowerCase()
+                                     .replace(/[-_\\s]/g, '');
+                        for (const [pat, token] of Object.entries(AUTOCOMPLETE_MAP)) {
+                            if (key.includes(pat)) return token;
+                        }
+                        return null;
+                    }
+
+                    const inputs = Array.from(document.querySelectorAll(
+                        'input:not([type="hidden"]):not([type="submit"]):not([type="button"])' +
+                        ':not([type="reset"]):not([type="image"]),select,textarea'
+                    ));
+
+                    return inputs.map(el => {
+                        const id = el.id || '';
+                        const type = el.getAttribute('type') || el.tagName.toLowerCase();
+                        const name = el.name || '';
+                        const visible = !!(el.offsetParent !== null || el.offsetWidth > 0 || el.offsetHeight > 0);
+
+                        let labelText = '';
+                        let labelMethod = 'none';
+
+                        if (el.getAttribute('aria-label')) {
+                            labelText = el.getAttribute('aria-label').trim();
+                            labelMethod = 'aria-label';
+                        } else if (el.getAttribute('aria-labelledby')) {
+                            const ref = document.getElementById(el.getAttribute('aria-labelledby'));
+                            labelText = ref ? (ref.innerText || ref.textContent || '').trim() : '';
+                            labelMethod = 'aria-labelledby';
+                        } else if (id) {
+                            const lbl = document.querySelector('label[for="' + CSS.escape(id) + '"]');
+                            if (lbl) {
+                                labelText = (lbl.innerText || lbl.textContent || '').trim();
+                                labelMethod = 'label-for';
+                            }
+                        }
+                        if (!labelText) {
+                            const wrap = el.closest('label');
+                            if (wrap) {
+                                labelText = (wrap.innerText || wrap.textContent || '').trim();
+                                labelMethod = 'wrapping-label';
+                            }
+                        }
+                        if (!labelText && el.getAttribute('title')) {
+                            labelText = el.getAttribute('title').trim();
+                            labelMethod = 'title';
+                        }
+                        if (!labelText && el.getAttribute('placeholder')) {
+                            labelText = el.getAttribute('placeholder').trim();
+                            labelMethod = 'placeholder-only';
+                        }
+
+                        const hasLabel = labelMethod !== 'none' && labelMethod !== 'placeholder-only';
+                        const hasPlaceholderOnly = labelMethod === 'placeholder-only';
+
+                        const required = el.required || el.getAttribute('aria-required') === 'true';
+                        const autocompleteVal = el.getAttribute('autocomplete') || '';
+                        const hasAutocomplete = !!autocompleteVal && autocompleteVal !== 'off';
+                        const suggestedToken = guessToken(el);
+                        const needsAutocomplete = !!suggestedToken && !hasAutocomplete;
+
+                        let selector = id ? '#' + id : (name ? '[name="' + name + '"]' : el.tagName.toLowerCase());
+                        if (!id && !name && type) selector += '[type="' + type + '"]';
+
+                        return {
+                            id, type, name, visible,
+                            labelText: labelText.slice(0, 100),
+                            hasLabel, labelMethod, hasPlaceholderOnly,
+                            hasRequired: !!required,
+                            hasAutocomplete, autocompleteValue: autocompleteVal,
+                            suggestedAutocomplete: suggestedToken,
+                            needsAutocomplete,
+                            inFieldset: !!el.closest('fieldset'),
+                            selector,
+                        };
+                    });
+                }""")
+
+                form_groups = page.evaluate("""() => {
+                    const radio = {}, checkbox = {};
+                    document.querySelectorAll('input[type="radio"],input[type="checkbox"]').forEach(el => {
+                        const n = el.name || '';
+                        if (!n) return;
+                        const bucket = el.type === 'radio' ? radio : checkbox;
+                        if (!bucket[n]) bucket[n] = { name: n, type: el.type, count: 0, inFieldset: false };
+                        bucket[n].count++;
+                        if (el.closest('fieldset')) bucket[n].inFieldset = true;
+                    });
+
+                    const groups = [...Object.values(radio), ...Object.values(checkbox)]
+                        .filter(g => g.count > 1)
+                        .map(g => ({ ...g, hasMissingFieldset: !g.inFieldset }));
+
+                    const fieldsets = Array.from(document.querySelectorAll('fieldset')).map(fs => {
+                        const legend = fs.querySelector('legend');
+                        return {
+                            hasLegend: !!legend,
+                            legendText: legend ? (legend.innerText || legend.textContent || '').trim().slice(0, 80) : '',
+                        };
+                    });
+
+                    return { groups, fieldsets };
+                }""")
+
+            finally:
+                context.close()
+                browser.close()
+    except Exception as exc:
+        errors.append(str(exc))
+
+    visible_fields = [f for f in fields if f.get("visible", True)]
+
+    unlabelled = [f for f in visible_fields if not f["hasLabel"] and not f["hasPlaceholderOnly"]]
+    placeholder_only = [f for f in visible_fields if f.get("hasPlaceholderOnly")]
+    needs_autocomplete = [f for f in visible_fields if f.get("needsAutocomplete")]
+
+    groups = form_groups.get("groups", []) if isinstance(form_groups, dict) else []
+    fieldsets = form_groups.get("fieldsets", []) if isinstance(form_groups, dict) else []
+    missing_fieldset_groups = [g for g in groups if g.get("hasMissingFieldset")]
+    fieldsets_no_legend = [fs for fs in fieldsets if not fs["hasLegend"]]
+
+    checks = [
+        {
+            "id": "label_coverage",
+            "label": "All interactive inputs have labels",
+            "passed": len(unlabelled) == 0,
+            "details": (
+                f"{len(visible_fields) - len(unlabelled)} of {len(visible_fields)} inputs are labelled"
+                if visible_fields else "No form inputs found"
+            ),
+            "wcag": "1.3.1",
+        },
+        {
+            "id": "no_placeholder_only",
+            "label": "No input relies solely on placeholder as label",
+            "passed": len(placeholder_only) == 0,
+            "details": (
+                f"{len(placeholder_only)} input(s) use placeholder as their only label"
+                if placeholder_only else "No placeholder-only inputs found"
+            ),
+            "wcag": "1.3.1",
+        },
+        {
+            "id": "autocomplete",
+            "label": "Personal data fields have autocomplete attributes",
+            "passed": len(needs_autocomplete) == 0,
+            "details": (
+                f"{len(needs_autocomplete)} field(s) likely need an autocomplete attribute"
+                if needs_autocomplete else "Autocomplete attributes look good"
+            ),
+            "wcag": "1.3.5",
+        },
+        {
+            "id": "fieldset_groups",
+            "label": "Radio/checkbox groups wrapped in fieldset",
+            "passed": len(missing_fieldset_groups) == 0,
+            "details": (
+                f"{len(missing_fieldset_groups)} group(s) missing <fieldset>"
+                if missing_fieldset_groups else "All radio/checkbox groups use <fieldset>"
+            ),
+            "wcag": "1.3.1",
+        },
+        {
+            "id": "fieldset_legend",
+            "label": "All fieldsets have a legend",
+            "passed": len(fieldsets_no_legend) == 0,
+            "details": (
+                f"{len(fieldsets_no_legend)} <fieldset>(s) missing <legend>"
+                if fieldsets_no_legend else "All fieldsets have legends"
+            ),
+            "wcag": "1.3.1",
+        },
+    ]
+
+    issues = []
+    for f in unlabelled:
+        issues.append({
+            "type": "missing_label",
+            "severity": "error",
+            "message": "Input missing label",
+            "detail": f"{f['selector']} (type: {f['type']}) has no associated label",
+            "wcag": "1.3.1",
+            "selector": f["selector"],
+        })
+    for f in placeholder_only:
+        issues.append({
+            "type": "placeholder_only",
+            "severity": "warning",
+            "message": "Placeholder used as only label",
+            "detail": f"{f['selector']} uses \"{f['labelText']}\" as its only label — placeholder disappears on input",
+            "wcag": "1.3.1",
+            "selector": f["selector"],
+        })
+    for f in needs_autocomplete:
+        issues.append({
+            "type": "missing_autocomplete",
+            "severity": "warning",
+            "message": "Missing autocomplete attribute",
+            "detail": f"{f['selector']} (label: \"{f.get('labelText', '')}\") should have autocomplete=\"{f['suggestedAutocomplete']}\"",
+            "wcag": "1.3.5",
+            "selector": f["selector"],
+        })
+    for g in missing_fieldset_groups:
+        issues.append({
+            "type": "missing_fieldset",
+            "severity": "error",
+            "message": f"{g['type'].capitalize()} group missing fieldset",
+            "detail": f"Group name=\"{g['name']}\" has {g['count']} {g['type']} inputs with no wrapping <fieldset>",
+            "wcag": "1.3.1",
+            "selector": f"[name=\"{g['name']}\"]",
+        })
+    for fs in fieldsets_no_legend:
+        issues.append({
+            "type": "missing_legend",
+            "severity": "warning",
+            "message": "Fieldset missing legend",
+            "detail": "A <fieldset> element has no <legend> to describe the group",
+            "wcag": "1.3.1",
+            "selector": "fieldset",
+        })
+
+    passed_count = sum(1 for c in checks if c["passed"])
+    score = round((passed_count / len(checks)) * 100) if checks else 100
+    error_issues = [i for i in issues if i["severity"] == "error"]
+
+    return {
+        "passed": len(error_issues) == 0 and not errors,
+        "title": page_title,
+        "score": score,
+        "totalFields": len(visible_fields),
+        "labelledFields": len(visible_fields) - len(unlabelled) - len(placeholder_only),
+        "unlabelledFields": len(unlabelled),
+        "placeholderOnlyFields": len(placeholder_only),
+        "needsAutocompleteFields": len(needs_autocomplete),
+        "totalGroups": len(groups),
+        "missingFieldsetGroups": len(missing_fieldset_groups),
+        "checks": checks,
+        "fields": visible_fields,
+        "issues": issues,
+        "errors": errors,
+    }

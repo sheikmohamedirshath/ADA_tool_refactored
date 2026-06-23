@@ -31,6 +31,7 @@ from services.url_processor import (
     run_keyboard_assisted_test,
     run_color_contrast_assisted_test,
     run_page_structure_assisted_test,
+    run_forms_accessibility_test,
 )
 from services import db
 from backend.services import create_scan_job, get_scan_status
@@ -552,6 +553,31 @@ def api_assisted_page_structure():
                 db.save_assistive_scan("page-structure", url, bool(result.get("passed", False)), result)
             except Exception as _e:
                 logging.warning("Failed to persist page-structure scan: %s", _e)
+        return jsonify({"ok": True, "result": result})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@app.route("/api/assisted/forms", methods=["POST"])
+@require_auth
+def api_assisted_forms():
+    """Run forms accessibility checks (labels, autocomplete, fieldsets) for a URL."""
+    if not request.is_json:
+        return jsonify({"ok": False, "error": "Content-Type must be application/json"}), 400
+    try:
+        data = request.get_json(silent=True) or {}
+    except Exception:
+        return jsonify({"ok": False, "error": "Invalid JSON body"}), 400
+    url = (data.get("url") or "").strip()
+    if not url:
+        return jsonify({"ok": False, "error": "Missing or empty 'url'"}), 400
+    try:
+        result = run_forms_accessibility_test(url)
+        if db.is_ready():
+            try:
+                db.save_assistive_scan("forms", url, bool(result.get("passed", False)), result)
+            except Exception as _e:
+                logging.warning("Failed to persist forms scan: %s", _e)
         return jsonify({"ok": True, "result": result})
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 500
@@ -1119,6 +1145,488 @@ Provide a structured fix in this EXACT JSON format (no other text, valid JSON on
     except Exception as e:
         logging.exception("AI fix endpoint error: %s", e)
         return jsonify({"ok": False, "error": str(e)}), 500
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# INTEGRATIONS  (Slack OAuth + Teams incoming webhook)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _slack_api(token: str, method: str, payload: dict) -> dict:
+    """Call a Slack Web API method with a bot token."""
+    data = json.dumps(payload).encode("utf-8")
+    req = urllib.request.Request(
+        f"https://slack.com/api/{method}",
+        data=data,
+        headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+        method="POST",
+    )
+    with urllib.request.urlopen(req, timeout=10) as resp:
+        return json.loads(resp.read())
+
+
+def _teams_webhook_send(webhook_url: str, payload: dict) -> bool:
+    """POST an Adaptive Card payload to a Teams incoming webhook URL."""
+    data = json.dumps(payload).encode("utf-8")
+    req = urllib.request.Request(
+        webhook_url,
+        data=data,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    with urllib.request.urlopen(req, timeout=10) as resp:
+        return resp.status == 200
+
+
+def _build_slack_blocks(report_type: str, context: dict) -> tuple[list, str]:
+    """Return (blocks, fallback_text) for a Slack Block Kit message."""
+    url       = context.get("url", "—")
+    score     = context.get("score", "—")
+    violations = context.get("violations", "—")
+    pass_rate = context.get("pass_rate", "—")
+    pages     = context.get("pages")
+    note      = context.get("note", "")
+    app_url   = Config.APP_BASE_URL
+
+    if report_type == "crawl_summary":
+        title = f"ADA Crawl Report — {url}"
+        fields = [
+            {"type": "mrkdwn", "text": f"*Pages Scanned*\n{pages or '—'}"},
+            {"type": "mrkdwn", "text": f"*Avg Score*\n{score}/100"},
+            {"type": "mrkdwn", "text": f"*Violations*\n{violations}"},
+            {"type": "mrkdwn", "text": f"*Pass Rate*\n{pass_rate}%"},
+        ]
+    elif report_type == "score_card":
+        title = f"ADA Score Card — {url}"
+        fields = [
+            {"type": "mrkdwn", "text": f"*Accessibility Score*\n{score}/100"},
+            {"type": "mrkdwn", "text": f"*Pass Rate*\n{pass_rate}%"},
+        ]
+    else:  # scan_summary
+        title = f"ADA Scan Summary — {url}"
+        fields = [
+            {"type": "mrkdwn", "text": f"*Score*\n{score}/100"},
+            {"type": "mrkdwn", "text": f"*Pass Rate*\n{pass_rate}%"},
+            {"type": "mrkdwn", "text": f"*Violations*\n{violations}"},
+        ]
+
+    blocks = [
+        {"type": "header", "text": {"type": "plain_text", "text": "ADA Accessibility Report", "emoji": True}},
+        {"type": "section", "text": {"type": "mrkdwn", "text": f"*{url}*"}},
+        {"type": "section", "fields": fields},
+    ]
+    if note:
+        blocks.append({"type": "section", "text": {"type": "mrkdwn", "text": f"_{note}_"}})
+    blocks.append({
+        "type": "actions",
+        "elements": [{"type": "button", "style": "primary",
+                       "text": {"type": "plain_text", "text": "View in ADA"},
+                       "url": app_url}],
+    })
+    blocks.append({"type": "divider"})
+    return blocks, title
+
+
+def _build_teams_card(report_type: str, context: dict) -> dict:
+    """Return a Teams Adaptive Card webhook payload."""
+    url        = context.get("url", "—")
+    score      = context.get("score", "—")
+    violations = context.get("violations", "—")
+    pass_rate  = context.get("pass_rate", "—")
+    pages      = context.get("pages")
+    note       = context.get("note", "")
+    app_url    = Config.APP_BASE_URL
+
+    if report_type == "crawl_summary":
+        facts = [
+            {"title": "Pages Scanned", "value": str(pages or "—")},
+            {"title": "Avg Score",     "value": f"{score}/100"},
+            {"title": "Violations",    "value": str(violations)},
+            {"title": "Pass Rate",     "value": f"{pass_rate}%"},
+        ]
+    elif report_type == "score_card":
+        facts = [
+            {"title": "Accessibility Score", "value": f"{score}/100"},
+            {"title": "Pass Rate",           "value": f"{pass_rate}%"},
+        ]
+    else:
+        facts = [
+            {"title": "Score",      "value": f"{score}/100"},
+            {"title": "Violations", "value": str(violations)},
+            {"title": "Pass Rate",  "value": f"{pass_rate}%"},
+        ]
+
+    body = [
+        {"type": "TextBlock", "size": "Large", "weight": "Bolder",
+         "text": "ADA Accessibility Report", "wrap": True},
+        {"type": "TextBlock", "text": url, "weight": "Bolder", "wrap": True},
+        {"type": "FactSet", "facts": facts},
+    ]
+    if note:
+        body.append({"type": "TextBlock", "text": note, "isSubtle": True, "wrap": True})
+
+    return {
+        "type": "message",
+        "attachments": [{
+            "contentType": "application/vnd.microsoft.card.adaptive",
+            "content": {
+                "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+                "type": "AdaptiveCard",
+                "version": "1.2",
+                "body": body,
+                "actions": [{"type": "Action.OpenUrl", "title": "View in ADA", "url": app_url}],
+            },
+        }],
+    }
+
+
+def _oauth_result_html(success: bool, event_type: str = "", workspace_name: str = "",
+                       error: str = "") -> str:
+    if success:
+        return f"""<!DOCTYPE html><html><head><title>Connected</title></head><body>
+<script>
+try {{
+  window.opener.postMessage(
+    {{type: "{event_type}", workspaceName: {json.dumps(workspace_name)}}},
+    window.opener.location.origin
+  );
+}} catch(e) {{}}
+setTimeout(() => window.close(), 500);
+</script>
+<p style="font-family:sans-serif;text-align:center;margin-top:80px">
+  Connected! You can close this window.</p>
+</body></html>"""
+    return f"""<!DOCTYPE html><html><head><title>Error</title></head><body>
+<script>
+try {{
+  window.opener.postMessage({{type: "ada_oauth_error", error: {json.dumps(error)}}},
+    window.opener.location.origin);
+}} catch(e) {{}}
+setTimeout(() => window.close(), 3000);
+</script>
+<p style="font-family:sans-serif;text-align:center;margin-top:80px;color:#c0392b">
+  {error}<br><small>You can close this window.</small></p>
+</body></html>"""
+
+
+@app.route("/api/integrations", methods=["GET"])
+@require_auth
+def api_integrations_list():
+    integrations = db.get_integrations(g.current_user_id)
+    return jsonify({"ok": True, "integrations": integrations})
+
+
+@app.route("/api/integrations/<int:integration_id>", methods=["DELETE"])
+@require_auth
+def api_integration_delete(integration_id):
+    ok = db.delete_integration(integration_id, g.current_user_id)
+    if not ok:
+        return jsonify({"ok": False, "error": "Integration not found"}), 404
+    return jsonify({"ok": True})
+
+
+@app.route("/api/integrations/<int:integration_id>/channels", methods=["GET"])
+@require_auth
+def api_integration_channels_list(integration_id):
+    integration = db.get_integration(integration_id, g.current_user_id)
+    if not integration:
+        return jsonify({"ok": False, "error": "Integration not found"}), 404
+    channels = db.get_integration_channels(integration_id)
+    return jsonify({"ok": True, "channels": channels})
+
+
+@app.route("/api/integrations/<int:integration_id>/channels", methods=["POST"])
+@require_auth
+def api_integration_channel_add(integration_id):
+    integration = db.get_integration(integration_id, g.current_user_id)
+    if not integration:
+        return jsonify({"ok": False, "error": "Integration not found"}), 404
+    body = request.get_json(silent=True) or {}
+    channel_id   = body.get("channel_id", "").strip()
+    channel_name = body.get("channel_name", "").strip()
+    purpose      = body.get("purpose")
+    webhook_url  = body.get("webhook_url")
+    if not channel_id or not channel_name:
+        return jsonify({"ok": False, "error": "channel_id and channel_name are required"}), 400
+    db.save_integration_channel(integration_id, channel_id, channel_name, purpose, webhook_url)
+    return jsonify({"ok": True})
+
+
+@app.route("/api/integrations/<int:integration_id>/channels/<channel_id>", methods=["DELETE"])
+@require_auth
+def api_integration_channel_delete(integration_id, channel_id):
+    integration = db.get_integration(integration_id, g.current_user_id)
+    if not integration:
+        return jsonify({"ok": False, "error": "Integration not found"}), 404
+    db.delete_integration_channel(integration_id, channel_id)
+    return jsonify({"ok": True})
+
+
+@app.route("/api/integrations/deliveries", methods=["GET"])
+@require_auth
+def api_integration_deliveries():
+    limit = request.args.get("limit", type=int) or 20
+    deliveries = db.get_integration_deliveries(g.current_user_id, limit=limit)
+    return jsonify({"ok": True, "deliveries": deliveries})
+
+
+# ── Slack OAuth ───────────────────────────────────────────────────────────────
+
+@app.route("/api/integrations/slack/start", methods=["GET"])
+@require_auth
+def api_slack_start():
+    if not Config.SLACK_ENABLED:
+        return jsonify({"ok": False, "error": "Slack integration is not configured. Set SLACK_CLIENT_ID and SLACK_CLIENT_SECRET."}), 400
+    token = request.headers.get("Authorization", "").replace("Bearer ", "").strip()
+    import urllib.parse as _up
+    state = _up.quote(token, safe="")
+    redirect_uri = f"{Config.APP_BASE_URL}/api/integrations/slack/callback"
+    auth_url = (
+        f"https://slack.com/oauth/v2/authorize"
+        f"?client_id={Config.SLACK_CLIENT_ID}"
+        f"&scope=chat%3Awrite%2Cchannels%3Aread%2Cgroups%3Aread"
+        f"&redirect_uri={_up.quote(redirect_uri, safe='')}"
+        f"&state={state}"
+    )
+    return jsonify({"ok": True, "auth_url": auth_url})
+
+
+@app.route("/api/integrations/slack/callback", methods=["GET"])
+def api_slack_callback():
+    code  = request.args.get("code", "")
+    state = request.args.get("state", "")
+    error = request.args.get("error", "")
+
+    if error:
+        return _oauth_result_html(False, error=f"Slack authorization cancelled: {error}")
+
+    try:
+        import urllib.parse as _up
+        token = _up.unquote(state)
+        payload = jwt.decode(token, Config.JWT_SECRET, algorithms=["HS256"])
+        user_id = int(payload["sub"])
+    except Exception:
+        return _oauth_result_html(False, error="Invalid state parameter. Please try again.")
+
+    if not Config.SLACK_ENABLED:
+        return _oauth_result_html(False, error="Slack integration not configured on this server.")
+
+    # Exchange code for access token
+    try:
+        import urllib.parse as _up
+        redirect_uri = f"{Config.APP_BASE_URL}/api/integrations/slack/callback"
+        form_data = _up.urlencode({
+            "client_id":     Config.SLACK_CLIENT_ID,
+            "client_secret": Config.SLACK_CLIENT_SECRET,
+            "code":          code,
+            "redirect_uri":  redirect_uri,
+        }).encode("utf-8")
+        req = urllib.request.Request(
+            "https://slack.com/api/oauth.v2.access",
+            data=form_data,
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read())
+    except Exception as e:
+        logging.exception("Slack token exchange failed: %s", e)
+        return _oauth_result_html(False, error="Failed to connect to Slack. Please try again.")
+
+    if not data.get("ok"):
+        return _oauth_result_html(False, error=data.get("error", "Slack authorization failed"))
+
+    workspace_id   = data["team"]["id"]
+    workspace_name = data["team"]["name"]
+    access_token   = data["access_token"]
+
+    try:
+        db.save_integration(
+            user_id=user_id,
+            platform="slack",
+            workspace_id=workspace_id,
+            workspace_name=workspace_name,
+            access_token=access_token,
+        )
+    except Exception as e:
+        logging.exception("Failed to save Slack integration: %s", e)
+        return _oauth_result_html(False, error="Connected to Slack but failed to save. Please try again.")
+
+    return _oauth_result_html(True, event_type="ada_slack_connected", workspace_name=workspace_name)
+
+
+@app.route("/api/integrations/slack/<int:integration_id>/channels/available", methods=["GET"])
+@require_auth
+def api_slack_channels_available(integration_id):
+    """List all public+private channels the bot can see in the workspace."""
+    integration = db.get_integration(integration_id, g.current_user_id)
+    if not integration or integration["platform"] != "slack":
+        return jsonify({"ok": False, "error": "Slack integration not found"}), 404
+    try:
+        result = _slack_api(
+            integration["access_token"],
+            "conversations.list",
+            {"types": "public_channel,private_channel", "limit": 200, "exclude_archived": True},
+        )
+        if not result.get("ok"):
+            return jsonify({"ok": False, "error": result.get("error", "Failed to list channels")}), 400
+        channels = [
+            {"id": c["id"], "name": c["name"], "is_private": c.get("is_private", False)}
+            for c in result.get("channels", [])
+        ]
+        channels.sort(key=lambda c: c["name"])
+        return jsonify({"ok": True, "channels": channels})
+    except Exception as e:
+        logging.exception("Failed to list Slack channels: %s", e)
+        return jsonify({"ok": False, "error": "Could not reach Slack API"}), 502
+
+
+@app.route("/api/integrations/slack/<int:integration_id>/test", methods=["POST"])
+@require_auth
+def api_slack_test(integration_id):
+    integration = db.get_integration(integration_id, g.current_user_id)
+    if not integration or integration["platform"] != "slack":
+        return jsonify({"ok": False, "error": "Integration not found"}), 404
+    body = request.get_json(silent=True) or {}
+    channel_id = body.get("channel_id")
+    if not channel_id:
+        return jsonify({"ok": False, "error": "channel_id required"}), 400
+    try:
+        result = _slack_api(integration["access_token"], "chat.postMessage", {
+            "channel": channel_id,
+            "text": "ADA is now connected to this channel.",
+            "blocks": [
+                {"type": "section", "text": {"type": "mrkdwn",
+                 "text": "*ADA Accessibility Intelligence* is now connected to this channel.\nYou will receive accessibility reports and alerts here."}},
+            ],
+        })
+        if not result.get("ok"):
+            return jsonify({"ok": False, "error": result.get("error", "Failed to send test message")}), 400
+        return jsonify({"ok": True})
+    except Exception as e:
+        logging.exception("Slack test message failed: %s", e)
+        return jsonify({"ok": False, "error": "Could not reach Slack API"}), 502
+
+
+# ── Teams (incoming webhook) ──────────────────────────────────────────────────
+
+@app.route("/api/integrations/teams/connect", methods=["POST"])
+@require_auth
+def api_teams_connect():
+    body        = request.get_json(silent=True) or {}
+    webhook_url = body.get("webhook_url", "").strip()
+    channel_name = body.get("channel_name", "").strip()
+    workspace_name = body.get("workspace_name", "Teams").strip()
+
+    if not webhook_url or not channel_name:
+        return jsonify({"ok": False, "error": "webhook_url and channel_name are required"}), 400
+    if not webhook_url.startswith("https://"):
+        return jsonify({"ok": False, "error": "Webhook URL must start with https://"}), 400
+
+    # Send test message to validate the webhook
+    test_payload = {
+        "type": "message",
+        "attachments": [{
+            "contentType": "application/vnd.microsoft.card.adaptive",
+            "content": {
+                "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+                "type": "AdaptiveCard", "version": "1.2",
+                "body": [{"type": "TextBlock", "weight": "Bolder",
+                          "text": "ADA Accessibility Intelligence is now connected to this channel."}],
+            },
+        }],
+    }
+    try:
+        ok = _teams_webhook_send(webhook_url, test_payload)
+        if not ok:
+            return jsonify({"ok": False, "error": "Webhook test failed — check the URL and try again"}), 400
+    except Exception as e:
+        logging.exception("Teams webhook test failed: %s", e)
+        return jsonify({"ok": False, "error": "Could not reach the Teams webhook URL"}), 400
+
+    # Save integration + channel
+    import uuid as _uuid
+    workspace_id   = f"teams_{_uuid.uuid4().hex[:12]}"
+    integration_id = db.save_integration(
+        user_id=g.current_user_id,
+        platform="teams",
+        workspace_id=workspace_id,
+        workspace_name=workspace_name,
+        access_token=None,
+    )
+    channel_id = f"ch_{_uuid.uuid4().hex[:12]}"
+    db.save_integration_channel(
+        integration_id=integration_id,
+        channel_id=channel_id,
+        channel_name=channel_name,
+        purpose=None,
+        webhook_url=webhook_url,
+    )
+    return jsonify({"ok": True, "integration_id": integration_id})
+
+
+# ── Send report ───────────────────────────────────────────────────────────────
+
+@app.route("/api/integrations/send", methods=["POST"])
+@require_auth
+def api_integration_send():
+    body           = request.get_json(silent=True) or {}
+    integration_id = body.get("integration_id")
+    channel_id     = body.get("channel_id")
+    report_type    = body.get("report_type", "scan_summary")
+    context        = body.get("context", {})
+    note           = body.get("note", "")
+    context["note"] = note
+
+    if not integration_id or not channel_id:
+        return jsonify({"ok": False, "error": "integration_id and channel_id are required"}), 400
+
+    integration = db.get_integration(int(integration_id), g.current_user_id)
+    if not integration:
+        return jsonify({"ok": False, "error": "Integration not found"}), 404
+
+    channels = db.get_integration_channels(int(integration_id))
+    channel  = next((c for c in channels if c["channel_id"] == channel_id), None)
+    if not channel:
+        return jsonify({"ok": False, "error": "Channel not found"}), 404
+
+    try:
+        if integration["platform"] == "slack":
+            blocks, fallback = _build_slack_blocks(report_type, context)
+            result = _slack_api(integration["access_token"], "chat.postMessage", {
+                "channel": channel_id,
+                "text": fallback,
+                "blocks": blocks,
+            })
+            success = result.get("ok", False)
+            err_msg = None if success else result.get("error", "Unknown error")
+        else:  # teams
+            payload = _build_teams_card(report_type, context)
+            success = _teams_webhook_send(channel["webhook_url"], payload)
+            err_msg = None if success else "Webhook delivery failed"
+
+        db.log_integration_delivery(
+            integration_id=int(integration_id),
+            channel_id=channel_id,
+            channel_name=channel["channel_name"],
+            report_type=report_type,
+            status="success" if success else "failed",
+            error_msg=err_msg,
+            reference=context.get("reference"),
+        )
+        if not success:
+            return jsonify({"ok": False, "error": err_msg}), 400
+        return jsonify({"ok": True})
+    except Exception as e:
+        logging.exception("Integration send failed: %s", e)
+        db.log_integration_delivery(
+            integration_id=int(integration_id),
+            channel_id=channel_id,
+            channel_name=channel["channel_name"],
+            report_type=report_type,
+            status="failed",
+            error_msg=str(e),
+        )
+        return jsonify({"ok": False, "error": "Delivery failed — check connection settings"}), 500
 
 
 @app.route("/", defaults={"path": ""})

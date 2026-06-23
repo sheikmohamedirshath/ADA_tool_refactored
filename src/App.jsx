@@ -13,6 +13,7 @@ import AlertsPage from './pages/AlertsPage'
 import DigestHistoryPage from './pages/DigestHistoryPage'
 import ExecutiveSummaryPage from './pages/ExecutiveSummaryPage'
 import AssistiveTestingPage from './pages/AssistiveTestingPage'
+import AssistiveResultsPage from './pages/AssistiveResultsPage'
 import AIFixPage from './pages/AIFixPage'
 import SettingsPage from './pages/SettingsPage'
 import NewScanPage from './pages/NewScanPage'
@@ -20,6 +21,7 @@ import ScanHistoryView from './components/ScanHistory/ScanHistoryView'
 import ADAResultsView from './components/ADAResultsView/ADAResultsView'
 import VerifyEmailPage from './pages/VerifyEmailPage'
 import WcagReferencePage from './pages/WcagReferencePage'
+import IntegrationsPage from './pages/IntegrationsPage'
 
 const PUBLIC_PAGES = new Set(['landing', 'login', 'signup', 'verify-email']);
 
@@ -99,8 +101,10 @@ function AppInner() {
             {activePage === 'executive-summary' && <ExecutiveSummaryPage />}
             {activePage === 'keyboard-test' && <AssistiveTestingPage />}
             {activePage === 'assistive-test' && <AssistiveTestingPage />}
+            {activePage === 'assistive-results' && <AssistiveResultsPage />}
             {activePage === 'ai-fix' && <AIFixPage />}
             {activePage === 'wcag-reference' && <WcagReferencePage />}
+            {activePage === 'integrations' && <IntegrationsPage />}
             {activePage === 'settings' && <SettingsPage />}
           </main>
         </div>

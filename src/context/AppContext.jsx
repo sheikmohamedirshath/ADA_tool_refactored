@@ -19,8 +19,10 @@ const PAGE_TO_PATH = {
   'digest-history':     '/digest-history',
   'keyboard-test':      '/keyboard-test',   // legacy route — kept for backward compat
   'assistive-test':     '/assistive-test',
+  'assistive-results':  '/assistive-results',
   'ai-fix':             '/ai-fix',
   'wcag-reference':     '/wcag-reference',
+  integrations:         '/integrations',
   settings:             '/settings',
 };
 
@@ -87,6 +89,8 @@ export const AppContext = createContext({
   setPendingAssistiveUrl: () => {},
   pendingAssistiveModule: null,
   setPendingAssistiveModule: () => {},
+  assistiveResult: null,
+  setAssistiveResult: () => {},
   user: null,
   token: null,
   isAuthenticated: false,
@@ -103,6 +107,7 @@ export function AppProvider({ children }) {
   const [wcagCriterionId, setWcagCriterionId] = useState(null);
   const [pendingAssistiveUrl, setPendingAssistiveUrl] = useState('');
   const [pendingAssistiveModule, setPendingAssistiveModule] = useState(null);
+  const [assistiveResult, setAssistiveResult] = useState(null);
 
   const stored = readStoredAuth();
   const [user, setUser] = useState(stored.user);
@@ -194,6 +199,8 @@ export function AppProvider({ children }) {
         setPendingAssistiveUrl,
         pendingAssistiveModule,
         setPendingAssistiveModule,
+        assistiveResult,
+        setAssistiveResult,
         user,
         token,
         isAuthenticated: !!token,
