@@ -394,7 +394,9 @@ export default function CrawlHistoryPage() {
         setCrawlId(data.crawl_id);
         navigate('crawl-results');
       }
-    } catch {}
+    } catch (err) {
+      setError(err.message || 'Re-crawl failed. Please try again.');
+    }
     setReCrawling(null);
   }
 

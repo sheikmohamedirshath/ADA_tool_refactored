@@ -1,6 +1,6 @@
 import {
   LayoutDashboard, Globe, Wand2, Settings, X,
-  ScanLine, History, CalendarClock, BellRing, Mail, ClipboardList, LogOut, BookOpen,
+  ScanLine, History, CalendarClock, BellRing, Mail, ClipboardList, LogOut, BookOpen, Plug,
 } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 import BrandLogo from '../ui/BrandLogo';
@@ -26,6 +26,12 @@ const NAV_SECTIONS = [
       { id: 'crawl-schedules', label: 'Schedules',     icon: CalendarClock },
       { id: 'alerts',          label: 'Alerts',        icon: BellRing      },
       { id: 'digest-history',  label: 'Weekly Digest', icon: Mail          },
+    ],
+  },
+  {
+    label: 'Integrations',
+    items: [
+      { id: 'integrations', label: 'Channels & Apps', icon: Plug },
     ],
   },
   {

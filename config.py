@@ -53,6 +53,15 @@ class Config:
     SCHEDULER_INTERVAL_SECONDS = int(os.getenv("SCHEDULER_INTERVAL_SECONDS", "60"))
     # Auth
     JWT_SECRET = os.getenv("JWT_SECRET", "change-me-in-production-use-a-long-random-string")
+    if IS_PRODUCTION and JWT_SECRET == "change-me-in-production-use-a-long-random-string":
+        raise RuntimeError(
+            "JWT_SECRET must be set to a strong random value in production. "
+            "Generate one with: python -c \"import secrets; print(secrets.token_hex(32))\""
+        )
     JWT_EXPIRE_HOURS = int(os.getenv("JWT_EXPIRE_HOURS", "24"))
     EMAIL_VERIFY_EXPIRE_HOURS = int(os.getenv("EMAIL_VERIFY_EXPIRE_HOURS", "24"))
     GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "")
+    # Slack integration (OAuth bot token flow)
+    SLACK_CLIENT_ID     = os.getenv("SLACK_CLIENT_ID", "")
+    SLACK_CLIENT_SECRET = os.getenv("SLACK_CLIENT_SECRET", "")
+    SLACK_ENABLED       = bool(os.getenv("SLACK_CLIENT_ID", ""))

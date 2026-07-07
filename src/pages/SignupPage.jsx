@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
-import { Sun, Moon, Eye, EyeOff, Mail } from 'lucide-react';
+import { Sun, Moon, Eye, EyeOff, Mail, Lock, User } from 'lucide-react';
 import BrandLogo from '../components/ui/BrandLogo';
+import GlowInput from '../components/ui/GlowInput';
 import { useApp } from '../context/AppContext';
 
 export default function SignupPage({ dark, toggleDark }) {
@@ -150,30 +151,30 @@ export default function SignupPage({ dark, toggleDark }) {
                       <label htmlFor="firstName" className="block text-sm font-medium text-ink dark:text-white">
                         First name
                       </label>
-                      <input
+                      <GlowInput
                         id="firstName"
                         type="text"
+                        icon={User}
                         autoComplete="given-name"
                         required
                         value={firstName}
                         onChange={e => setFirstName(e.target.value)}
                         placeholder="Jane"
-                        className="w-full px-3 py-2.5 rounded-xl border border-gray-200 dark:border-white/10 bg-white dark:bg-night text-ink dark:text-white text-sm placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-teal"
                       />
                     </div>
                     <div className="space-y-1.5">
                       <label htmlFor="lastName" className="block text-sm font-medium text-ink dark:text-white">
                         Last name
                       </label>
-                      <input
+                      <GlowInput
                         id="lastName"
                         type="text"
+                        icon={User}
                         autoComplete="family-name"
                         required
                         value={lastName}
                         onChange={e => setLastName(e.target.value)}
                         placeholder="Smith"
-                        className="w-full px-3 py-2.5 rounded-xl border border-gray-200 dark:border-white/10 bg-white dark:bg-night text-ink dark:text-white text-sm placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-teal"
                       />
                     </div>
                   </div>
@@ -182,15 +183,15 @@ export default function SignupPage({ dark, toggleDark }) {
                     <label htmlFor="email" className="block text-sm font-medium text-ink dark:text-white">
                       Email
                     </label>
-                    <input
+                    <GlowInput
                       id="email"
                       type="email"
+                      icon={Mail}
                       autoComplete="email"
                       required
                       value={email}
                       onChange={e => setEmail(e.target.value)}
                       placeholder="you@company.com"
-                      className="w-full px-4 py-2.5 rounded-xl border border-gray-200 dark:border-white/10 bg-white dark:bg-night text-ink dark:text-white text-sm placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-teal"
                     />
                   </div>
 
@@ -198,7 +199,8 @@ export default function SignupPage({ dark, toggleDark }) {
                     <label htmlFor="password" className="block text-sm font-medium text-ink dark:text-white">
                       Password
                     </label>
-                    <div className="relative">
+                    <div className="glow-input-wrapper">
+                      <Lock className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none z-10" />
                       <input
                         id="password"
                         type={showPw ? 'text' : 'password'}
@@ -207,12 +209,12 @@ export default function SignupPage({ dark, toggleDark }) {
                         value={password}
                         onChange={e => setPassword(e.target.value)}
                         placeholder="Min. 8 characters"
-                        className="w-full px-4 py-2.5 pr-10 rounded-xl border border-gray-200 dark:border-white/10 bg-white dark:bg-night text-ink dark:text-white text-sm placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-teal"
+                        className="glow-input has-left-icon pr-10"
                       />
                       <button
                         type="button"
                         onClick={() => setShowPw(p => !p)}
-                        className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-ink dark:hover:text-white"
+                        className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-ink dark:hover:text-white z-10"
                         aria-label={showPw ? 'Hide password' : 'Show password'}
                       >
                         {showPw ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}

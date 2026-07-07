@@ -389,6 +389,49 @@ def _ensure_table() -> None:
             WHERE VerifyToken IS NOT NULL
         """)
         conn.commit()
+        # ── Integrations (Slack / Teams) ──────────────────────────────────────
+        cur.execute("""
+            IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = N'Integration')
+            CREATE TABLE dbo.Integration (
+                Id            INT IDENTITY(1,1) PRIMARY KEY,
+                UserId        INT            NOT NULL,
+                Platform      NVARCHAR(20)   NOT NULL,
+                WorkspaceId   NVARCHAR(200)  NOT NULL,
+                WorkspaceName NVARCHAR(200)  NOT NULL,
+                AccessToken   NVARCHAR(2000) NULL,
+                ConnectedAt   DATETIME2(3)   NOT NULL DEFAULT SYSUTCDATETIME(),
+                Status        NVARCHAR(20)   NOT NULL DEFAULT 'active'
+            )
+        """)
+        conn.commit()
+        cur.execute("""
+            IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = N'IntegrationChannel')
+            CREATE TABLE dbo.IntegrationChannel (
+                Id              INT IDENTITY(1,1) PRIMARY KEY,
+                IntegrationId   INT            NOT NULL,
+                ChannelId       NVARCHAR(200)  NOT NULL,
+                ChannelName     NVARCHAR(200)  NOT NULL,
+                Purpose         NVARCHAR(50)   NULL,
+                WebhookUrl      NVARCHAR(2000) NULL,
+                AddedAt         DATETIME2(3)   NOT NULL DEFAULT SYSUTCDATETIME()
+            )
+        """)
+        conn.commit()
+        cur.execute("""
+            IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = N'IntegrationDelivery')
+            CREATE TABLE dbo.IntegrationDelivery (
+                Id              INT IDENTITY(1,1) PRIMARY KEY,
+                IntegrationId   INT            NOT NULL,
+                ChannelId       NVARCHAR(200)  NULL,
+                ChannelName     NVARCHAR(200)  NULL,
+                ReportType      NVARCHAR(50)   NOT NULL,
+                Status          NVARCHAR(20)   NOT NULL,
+                SentAt          DATETIME2(3)   NOT NULL DEFAULT SYSUTCDATETIME(),
+                ErrorMessage    NVARCHAR(500)  NULL,
+                Reference       NVARCHAR(200)  NULL
+            )
+        """)
+        conn.commit()
     finally:
         conn.close()
 
@@ -2573,3 +2616,257 @@ def get_assistive_scans(
         return out
     finally:
         conn.close()
+
+
+# ── Integration CRUD ──────────────────────────────────────────────────────────
+
+def save_integration(user_id: int, platform: str, workspace_id: str,
+                     workspace_name: str, access_token: str | None) -> int:
+    """Upsert a workspace connection. Returns the Integration.Id."""
+    if not is_enabled() or _INIT_ERROR:
+        raise RuntimeError("Database not available")
+    conn = _conn()
+    try:
+        cur = conn.cursor()
+        # Update if same workspace already exists for this user
+        cur.execute("""
+            UPDATE dbo.Integration
+            SET WorkspaceName = ?, AccessToken = ?, Status = 'active'
+            WHERE UserId = ? AND Platform = ? AND WorkspaceId = ?
+        """, workspace_name, access_token, user_id, platform, workspace_id)
+        if cur.rowcount == 0:
+            cur.execute("""
+                INSERT INTO dbo.Integration (UserId, Platform, WorkspaceId, WorkspaceName, AccessToken)
+                OUTPUT INSERTED.Id
+                VALUES (?, ?, ?, ?, ?)
+            """, user_id, platform, workspace_id, workspace_name, access_token)
+            row = cur.fetchone()
+            conn.commit()
+            return int(row[0])
+        conn.commit()
+        cur.execute("""
+            SELECT Id FROM dbo.Integration
+            WHERE UserId = ? AND Platform = ? AND WorkspaceId = ?
+        """, user_id, platform, workspace_id)
+        return int(cur.fetchone()[0])
+    finally:
+        conn.close()
+
+
+def get_integrations(user_id: int) -> list[dict]:
+    """Return all active integrations for a user."""
+    if not is_enabled() or _INIT_ERROR:
+        return []
+    conn = _conn()
+    try:
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT i.Id, i.Platform, i.WorkspaceId, i.WorkspaceName, i.ConnectedAt,
+                   (SELECT COUNT(*) FROM dbo.IntegrationChannel c WHERE c.IntegrationId = i.Id) AS ChannelCount
+            FROM dbo.Integration i
+            WHERE i.UserId = ? AND i.Status = 'active'
+            ORDER BY i.ConnectedAt DESC
+        """, user_id)
+        rows = cur.fetchall()
+    finally:
+        conn.close()
+    out = []
+    for r in rows:
+        ts = r.ConnectedAt
+        if hasattr(ts, "isoformat"):
+            ts = ts.isoformat()
+        out.append({
+            "id": r.Id,
+            "platform": r.Platform,
+            "workspace_id": r.WorkspaceId,
+            "workspace_name": r.WorkspaceName,
+            "connected_at": ts,
+            "channel_count": r.ChannelCount,
+        })
+    return out
+
+
+def get_integration(integration_id: int, user_id: int) -> dict | None:
+    """Fetch a single integration, verifying ownership."""
+    if not is_enabled() or _INIT_ERROR:
+        return None
+    conn = _conn()
+    try:
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT Id, Platform, WorkspaceId, WorkspaceName, AccessToken, ConnectedAt
+            FROM dbo.Integration
+            WHERE Id = ? AND UserId = ? AND Status = 'active'
+        """, integration_id, user_id)
+        r = cur.fetchone()
+    finally:
+        conn.close()
+    if not r:
+        return None
+    ts = r.ConnectedAt
+    if hasattr(ts, "isoformat"):
+        ts = ts.isoformat()
+    return {
+        "id": r.Id,
+        "platform": r.Platform,
+        "workspace_id": r.WorkspaceId,
+        "workspace_name": r.WorkspaceName,
+        "access_token": r.AccessToken,
+        "connected_at": ts,
+    }
+
+
+def delete_integration(integration_id: int, user_id: int) -> bool:
+    """Soft-delete an integration and its channels."""
+    if not is_enabled() or _INIT_ERROR:
+        return False
+    conn = _conn()
+    try:
+        cur = conn.cursor()
+        cur.execute("""
+            UPDATE dbo.Integration SET Status = 'disconnected'
+            WHERE Id = ? AND UserId = ?
+        """, integration_id, user_id)
+        conn.commit()
+        return cur.rowcount > 0
+    finally:
+        conn.close()
+
+
+def save_integration_channel(integration_id: int, channel_id: str,
+                              channel_name: str, purpose: str | None,
+                              webhook_url: str | None = None) -> int:
+    """Add or update a channel on an integration. Returns IntegrationChannel.Id."""
+    if not is_enabled() or _INIT_ERROR:
+        raise RuntimeError("Database not available")
+    conn = _conn()
+    try:
+        cur = conn.cursor()
+        cur.execute("""
+            UPDATE dbo.IntegrationChannel
+            SET ChannelName = ?, Purpose = ?, WebhookUrl = ?
+            WHERE IntegrationId = ? AND ChannelId = ?
+        """, channel_name, purpose, webhook_url, integration_id, channel_id)
+        if cur.rowcount == 0:
+            cur.execute("""
+                INSERT INTO dbo.IntegrationChannel
+                    (IntegrationId, ChannelId, ChannelName, Purpose, WebhookUrl)
+                OUTPUT INSERTED.Id
+                VALUES (?, ?, ?, ?, ?)
+            """, integration_id, channel_id, channel_name, purpose, webhook_url)
+            row = cur.fetchone()
+            conn.commit()
+            return int(row[0])
+        conn.commit()
+        cur.execute("""
+            SELECT Id FROM dbo.IntegrationChannel
+            WHERE IntegrationId = ? AND ChannelId = ?
+        """, integration_id, channel_id)
+        return int(cur.fetchone()[0])
+    finally:
+        conn.close()
+
+
+def get_integration_channels(integration_id: int) -> list[dict]:
+    """Return configured channels for an integration."""
+    if not is_enabled() or _INIT_ERROR:
+        return []
+    conn = _conn()
+    try:
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT Id, ChannelId, ChannelName, Purpose, WebhookUrl, AddedAt
+            FROM dbo.IntegrationChannel
+            WHERE IntegrationId = ?
+            ORDER BY AddedAt
+        """, integration_id)
+        rows = cur.fetchall()
+    finally:
+        conn.close()
+    out = []
+    for r in rows:
+        ts = r.AddedAt
+        if hasattr(ts, "isoformat"):
+            ts = ts.isoformat()
+        out.append({
+            "id": r.Id,
+            "channel_id": r.ChannelId,
+            "channel_name": r.ChannelName,
+            "purpose": r.Purpose,
+            "webhook_url": r.WebhookUrl,
+            "added_at": ts,
+        })
+    return out
+
+
+def delete_integration_channel(integration_id: int, channel_id: str) -> bool:
+    if not is_enabled() or _INIT_ERROR:
+        return False
+    conn = _conn()
+    try:
+        cur = conn.cursor()
+        cur.execute("""
+            DELETE FROM dbo.IntegrationChannel
+            WHERE IntegrationId = ? AND ChannelId = ?
+        """, integration_id, channel_id)
+        conn.commit()
+        return cur.rowcount > 0
+    finally:
+        conn.close()
+
+
+def log_integration_delivery(integration_id: int, channel_id: str | None,
+                              channel_name: str | None, report_type: str,
+                              status: str, error_msg: str | None = None,
+                              reference: str | None = None) -> None:
+    if not is_enabled() or _INIT_ERROR:
+        return
+    conn = _conn()
+    try:
+        cur = conn.cursor()
+        cur.execute("""
+            INSERT INTO dbo.IntegrationDelivery
+                (IntegrationId, ChannelId, ChannelName, ReportType, Status, ErrorMessage, Reference)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        """, integration_id, channel_id, channel_name, report_type, status, error_msg, reference)
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def get_integration_deliveries(user_id: int, limit: int = 20) -> list[dict]:
+    """Recent delivery log entries across all integrations for a user."""
+    if not is_enabled() or _INIT_ERROR:
+        return []
+    conn = _conn()
+    try:
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT TOP (?) d.Id, d.ReportType, d.Status, d.SentAt,
+                           d.ChannelName, d.ErrorMessage, d.Reference,
+                           i.Platform, i.WorkspaceName
+            FROM dbo.IntegrationDelivery d
+            JOIN dbo.Integration i ON i.Id = d.IntegrationId
+            WHERE i.UserId = ?
+            ORDER BY d.SentAt DESC
+        """, limit, user_id)
+        rows = cur.fetchall()
+    finally:
+        conn.close()
+    out = []
+    for r in rows:
+        ts = r.SentAt
+        if hasattr(ts, "isoformat"):
+            ts = ts.isoformat()
+        out.append({
+            "id": r.Id,
+            "report_type": r.ReportType,
+            "status": r.Status,
+            "sent_at": ts,
+            "channel_name": r.ChannelName,
+            "error_message": r.ErrorMessage,
+            "reference": r.Reference,
+            "platform": r.Platform,
+            "workspace_name": r.WorkspaceName,
+        })
+    return out

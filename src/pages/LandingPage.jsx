@@ -5,7 +5,7 @@ import {
   Sparkles, ArrowRight, ChevronDown,
   Link2, Search, Zap,
   Terminal, Code, Mail, GitBranch, FileCode, Monitor, Clock,
-  Check, Circle,
+  Check,
 } from 'lucide-react';
 import BrandLogo from '../components/ui/BrandLogo';
 import { useApp } from '../context/AppContext';
@@ -85,27 +85,6 @@ const INTEGRATIONS = [
   { icon: Clock,     label: 'Scheduled Scans',  desc: 'Daily and weekly auto-monitoring',     available: false },
 ];
 
-const ROADMAP_NOW = [
-  'Accessibility Scanning',
-  'Multi-page Crawling',
-  'Trend Analytics',
-  'AI Remediation',
-  'Keyboard Testing',
-  'Email Reports',
-  'Scan History',
-  'Crawl Reports',
-];
-
-const ROADMAP_SOON = [
-  'GitHub Integration',
-  'Multi-Viewport Scanning',
-  'WCAG PDF Reports',
-  'Scheduled Monitoring',
-  'SARIF Export',
-  'VS Code Extension',
-  'Single Sign-On',
-  'API Webhooks v2',
-];
 
 /* ─────────────────────────────────────────────
    Sub-components
@@ -523,48 +502,6 @@ export default function LandingPage({ onOpenApp, dark, toggleDark }) {
           </div>
         </section>
 
-        {/* PLATFORM ROADMAP */}
-        <section aria-label="Platform roadmap" className="py-16 bg-white dark:bg-night">
-          <div className="max-w-4xl mx-auto px-8">
-            <div className="text-center mb-10">
-              <span className="text-xs font-semibold uppercase tracking-widest text-teal">Roadmap</span>
-              <h2 className="font-heading font-bold text-3xl text-ink dark:text-white mt-2">Platform roadmap</h2>
-              <p className="text-sm text-body dark:text-gray-400 mt-3 max-w-sm mx-auto leading-relaxed">
-                What ADA can do today, and where it's headed.
-              </p>
-            </div>
-            <div className="grid md:grid-cols-2 gap-6">
-              <div className="card p-7">
-                <div className="flex items-center gap-2 mb-5">
-                  <div className="w-2 h-2 rounded-full bg-teal" aria-hidden="true" />
-                  <h3 className="font-heading font-semibold text-base text-ink dark:text-white">Available Today</h3>
-                </div>
-                <ul className="flex flex-col gap-2.5">
-                  {ROADMAP_NOW.map((item) => (
-                    <li key={item} className="flex items-center gap-2.5">
-                      <Check className="w-4 h-4 text-teal flex-shrink-0" aria-hidden="true" />
-                      <span className="text-sm text-body dark:text-gray-300">{item}</span>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-              <div className="card p-7 border-dashed">
-                <div className="flex items-center gap-2 mb-5">
-                  <div className="w-2 h-2 rounded-full bg-gray-300 dark:bg-gray-600" aria-hidden="true" />
-                  <h3 className="font-heading font-semibold text-base text-ink dark:text-white">On the Roadmap</h3>
-                </div>
-                <ul className="flex flex-col gap-2.5">
-                  {ROADMAP_SOON.map((item) => (
-                    <li key={item} className="flex items-center gap-2.5">
-                      <Circle className="w-4 h-4 text-gray-300 dark:text-gray-600 flex-shrink-0" aria-hidden="true" />
-                      <span className="text-sm text-body dark:text-gray-400">{item}</span>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            </div>
-          </div>
-        </section>
 
       </main>
 

@@ -12,7 +12,9 @@ import {
   RefreshCw,
   ChevronLeft,
   OctagonX,
+  Share2,
 } from 'lucide-react';
+import SendReportModal from '../components/integrations/SendReportModal';
 import {
   PieChart,
   Pie,
@@ -223,6 +225,7 @@ export default function CrawlResultsPage() {
   const [sortDir, setSortDir] = useState('asc');
   const [reCrawlLoading, setReCrawlLoading] = useState(false);
   const [stopLoading, setStopLoading] = useState(false);
+  const [showShareModal, setShowShareModal] = useState(false);
 
   const pollRef = useRef(null);
 
@@ -519,6 +522,16 @@ export default function CrawlResultsPage() {
                 Executive Report
               </button>
             )}
+            {isComplete && (
+              <button
+                onClick={() => setShowShareModal(true)}
+                className="btn-secondary flex items-center gap-2 text-sm"
+                title="Send report to Slack or Teams"
+              >
+                <Share2 size={14} />
+                Share to Channel
+              </button>
+            )}
             {job?.root_url && !isActive && (
               <button
                 onClick={handleReCrawl}
@@ -746,6 +759,20 @@ export default function CrawlResultsPage() {
               ? () => navigate('scan-history')
               : null
           }
+        />
+      )}
+      {showShareModal && (
+        <SendReportModal
+          onClose={() => setShowShareModal(false)}
+          defaultReportType="crawl_summary"
+          context={{
+            url:        job?.root_url || '',
+            score:      avgScore,
+            violations: totalViolations,
+            pass_rate:  passRate,
+            pages:      totalPages,
+            reference:  crawlId,
+          }}
         />
       )}
     </>
