@@ -7,10 +7,8 @@ import LoginPage from './pages/LoginPage'
 import SignupPage from './pages/SignupPage'
 import DashboardPage from './pages/DashboardPage'
 import CrawlResultsPage from './pages/CrawlResultsPage'
-import CrawlHistoryPage from './pages/CrawlHistoryPage'
 import CrawlSchedulesPage from './pages/CrawlSchedulesPage'
 import AlertsPage from './pages/AlertsPage'
-import DigestHistoryPage from './pages/DigestHistoryPage'
 import ExecutiveSummaryPage from './pages/ExecutiveSummaryPage'
 import AssistiveTestingPage from './pages/AssistiveTestingPage'
 import AssistiveResultsPage from './pages/AssistiveResultsPage'
@@ -20,10 +18,12 @@ import NewScanPage from './pages/NewScanPage'
 import ScanHistoryView from './components/ScanHistory/ScanHistoryView'
 import ADAResultsView from './components/ADAResultsView/ADAResultsView'
 import VerifyEmailPage from './pages/VerifyEmailPage'
+import ForgotPasswordPage from './pages/ForgotPasswordPage'
+import ResetPasswordPage from './pages/ResetPasswordPage'
 import WcagReferencePage from './pages/WcagReferencePage'
 import IntegrationsPage from './pages/IntegrationsPage'
 
-const PUBLIC_PAGES = new Set(['landing', 'login', 'signup', 'verify-email']);
+const PUBLIC_PAGES = new Set(['landing', 'login', 'signup', 'verify-email', 'forgot-password', 'reset-password']);
 
 function AppInner() {
   const { activePage, dark, setDark, navigate, sidebarOpen, setSidebarOpen, scanHistoryId, setScanHistoryId, isAuthenticated } = useApp()
@@ -52,6 +52,14 @@ function AppInner() {
 
   if (activePage === 'verify-email') {
     return <VerifyEmailPage dark={dark} toggleDark={toggleDark} />
+  }
+
+  if (activePage === 'forgot-password') {
+    return <ForgotPasswordPage dark={dark} toggleDark={toggleDark} />
+  }
+
+  if (activePage === 'reset-password') {
+    return <ResetPasswordPage dark={dark} toggleDark={toggleDark} />
   }
 
   if (!isAuthenticated) {
@@ -93,11 +101,9 @@ function AppInner() {
                   onClearResult={() => setScanHistoryId(null)}
                 />
               )}
-            {activePage === 'crawl-history' && <CrawlHistoryPage />}
             {activePage === 'crawl-results' && <CrawlResultsPage />}
             {activePage === 'crawl-schedules' && <CrawlSchedulesPage />}
             {activePage === 'alerts' && <AlertsPage />}
-            {activePage === 'digest-history' && <DigestHistoryPage />}
             {activePage === 'executive-summary' && <ExecutiveSummaryPage />}
             {activePage === 'keyboard-test' && <AssistiveTestingPage />}
             {activePage === 'assistive-test' && <AssistiveTestingPage />}

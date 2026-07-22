@@ -43,7 +43,6 @@ class TestAuthBypass:
         ("GET",  "/api/assistive-history"),
         ("GET",  "/api/crawls"),
         ("GET",  "/api/alerts"),
-        ("GET",  "/api/digests"),
         ("GET",  "/api/violations/summary"),
         ("POST", "/api/ai-fix"),
     ]

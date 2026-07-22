@@ -1,7 +1,7 @@
-import { apiFetch } from '../utils/api';
+import { apiFetch } from '../../utils/api';
 import { useState, useEffect, useMemo } from 'react';
 import {
-  Globe, ChevronLeft, ChevronRight, Search, Play, RefreshCw,
+  Globe, ChevronLeft, ChevronRight, Search, RefreshCw,
   TrendingUp, TrendingDown, Minus, BarChart2, X, GitCompareArrows,
   CheckSquare, Square,
 } from 'lucide-react';
@@ -9,10 +9,10 @@ import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip,
   ResponsiveContainer, Legend,
 } from 'recharts';
-import { useApp } from '../context/AppContext';
-import { formatDateTime, formatShortDate, formatDuration } from '../utils/format';
-import GlowInput from '../components/ui/GlowInput';
-import { StatusBadge } from '../components/ui/StatusBadge';
+import { useApp } from '../../context/AppContext';
+import { formatDateTime, formatShortDate, formatDuration } from '../../utils/format';
+import GlowInput from '../ui/GlowInput';
+import { StatusBadge } from '../ui/StatusBadge';
 
 const PAGE_SIZE = 25;
 
@@ -262,9 +262,9 @@ function ComparePanel({ data, loading, error, onClose }) {
 }
 
 // ---------------------------------------------------------------------------
-// Main page
+// Crawls tab content (embedded in Scan History)
 // ---------------------------------------------------------------------------
-export default function CrawlHistoryPage() {
+export function CrawlHistoryContent() {
   const { navigate, setCrawlId } = useApp();
 
   const [items, setItems] = useState([]);
@@ -439,27 +439,7 @@ export default function CrawlHistoryPage() {
   const compareReady = selectedForCompare.length === 2;
 
   return (
-    <main className="flex-1 overflow-auto bg-ivory dark:bg-night p-6 min-h-0" role="main">
-      <div className="max-w-[1040px] mx-auto space-y-6">
-
-        {/* ── Page header ────────────────────────────────────────────────── */}
-        <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-[1.75rem] font-bold text-ink dark:text-white mt-0 mb-1">
-              Crawl History
-            </h1>
-            <p className="text-body dark:text-gray-400 text-[0.9375rem]">
-              Every site crawl is saved with URL, score, and violation counts for regression tracking.
-            </p>
-          </div>
-          <button
-            onClick={() => navigate('new-scan')}
-            className="btn-primary flex items-center gap-2 shrink-0"
-          >
-            <Play className="w-4 h-4" />
-            New Crawl
-          </button>
-        </div>
+    <div className="space-y-6">
 
         {/* ── Task 6: Crawl Trend Dashboard ──────────────────────────────── */}
         {showAnalytics && (
@@ -769,7 +749,6 @@ export default function CrawlHistoryPage() {
             )}
           </>
         )}
-      </div>
-    </main>
+    </div>
   );
 }

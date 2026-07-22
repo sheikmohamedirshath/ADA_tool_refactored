@@ -38,7 +38,6 @@ MSSQL tables:
 | `CrawlSchedules` | Recurring crawl configurations |
 | `CrawlAISummary` | Claude-generated crawl summaries |
 | `Alerts` | Regression/score-drop alerts |
-| `DigestHistory` | Weekly digest records |
 
 Auto-creates database and all tables on startup if `MSSQL_CONN_STR` is set.
 
@@ -157,7 +156,7 @@ tests/
     test_crawl_api.py                         — 10 crawl endpoints (32 tests)
     test_assistive_api.py                     — 4 assistive endpoints (22 tests)
     test_history_api.py                       — History + trends endpoints (24 tests)
-    test_alerts_digests_api.py               — Alerts, digests, schedules, AI summary (30 tests)
+    test_alerts_api.py                        — Alerts, schedules, AI summary (23 tests)
     test_ai_fix_api.py                        — AI fix endpoint happy/error paths (12 tests)
   security/
     test_security.py                          — Auth bypass, SSRF, XSS, SQL injection,

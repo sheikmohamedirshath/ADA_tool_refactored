@@ -5,7 +5,7 @@ import GlowInput from '../components/ui/GlowInput';
 import { useApp } from '../context/AppContext';
 
 export default function LoginPage({ dark, toggleDark }) {
-  const { navigate, login } = useApp();
+  const { navigate, login, postAuthRedirect, setPostAuthRedirect } = useApp();
 
   const [email, setEmail]       = useState('');
   const [password, setPassword] = useState('');
@@ -39,7 +39,8 @@ export default function LoginPage({ dark, toggleDark }) {
         return;
       }
       login(data.user, data.token);
-      navigate('dashboard');
+      navigate(postAuthRedirect || 'dashboard');
+      setPostAuthRedirect(null);
     } catch {
       setError('Unable to reach the server. Please try again.');
     } finally {
@@ -133,9 +134,18 @@ export default function LoginPage({ dark, toggleDark }) {
               </div>
 
               <div className="space-y-1.5">
-                <label htmlFor="password" className="block text-sm font-medium text-ink dark:text-white">
-                  Password
-                </label>
+                <div className="flex items-center justify-between">
+                  <label htmlFor="password" className="block text-sm font-medium text-ink dark:text-white">
+                    Password
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => navigate('forgot-password')}
+                    className="text-xs font-semibold text-teal hover:underline focus:outline-none"
+                  >
+                    Forgot password?
+                  </button>
+                </div>
                 <div className="glow-input-wrapper">
                   <Lock className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none z-10" />
                   <input

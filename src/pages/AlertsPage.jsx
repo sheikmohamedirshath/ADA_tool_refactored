@@ -128,7 +128,7 @@ export default function AlertsPage() {
         setItems(data.items || []);
         setAvailable(data.available !== false);
       } else {
-        setError(data.error || 'Failed to load alerts');
+        setError(data.error || 'Failed to load notifications');
       }
     } catch (e) {
       setError(e.message);
@@ -160,10 +160,10 @@ export default function AlertsPage() {
         <div className="flex items-start justify-between gap-4">
           <div>
             <h1 className="text-[1.75rem] font-bold text-ink dark:text-white mt-0 mb-1">
-              Accessibility Alerts
+              Accessibility Notifications
             </h1>
             <p className="text-body dark:text-gray-400 text-[0.9375rem]">
-              Alerts are generated automatically when significant regressions are detected after each crawl.
+              Notifications are generated automatically when significant regressions are detected after each crawl.
             </p>
           </div>
         </div>
@@ -180,7 +180,7 @@ export default function AlertsPage() {
                   : 'bg-white dark:bg-charcoal border border-gray-200 dark:border-white/10 text-body dark:text-gray-400 hover:text-ink dark:hover:text-white'
               }`}
             >
-              {f === 'active' ? 'Active' : 'All alerts'}
+              {f === 'active' ? 'Active' : 'All notifications'}
             </button>
           ))}
         </div>
@@ -188,7 +188,7 @@ export default function AlertsPage() {
         {/* DB unavailable */}
         {!available && !loading && (
           <p className="text-sm text-body dark:text-gray-400 bg-teal/10 px-4 py-3 rounded-xl border border-teal">
-            Alerts require database (MSSQL) to be configured.
+            Notifications require database (MSSQL) to be configured.
           </p>
         )}
 
@@ -210,12 +210,12 @@ export default function AlertsPage() {
               <BellRing className="w-8 h-8 text-sage" />
             </div>
             <p className="font-heading font-bold text-xl text-ink dark:text-white">
-              {filter === 'active' ? 'No active alerts' : 'No alerts yet'}
+              {filter === 'active' ? 'No active notifications' : 'No notifications yet'}
             </p>
             <p className="text-sm text-body dark:text-gray-400 max-w-xs leading-relaxed">
               {filter === 'active'
-                ? 'All alerts have been acknowledged. Alerts are generated automatically after crawl completion.'
-                : 'Alerts appear here after crawls detect significant accessibility regressions.'}
+                ? 'All notifications have been acknowledged. Notifications are generated automatically after crawl completion.'
+                : 'Notifications appear here after crawls detect significant accessibility regressions.'}
             </p>
           </div>
         )}
@@ -235,7 +235,7 @@ export default function AlertsPage() {
 
         {/* Info */}
         <div className="text-xs text-body dark:text-gray-500 bg-gray-50 dark:bg-white/[0.03] rounded-xl p-4 space-y-1">
-          <p className="font-semibold text-ink dark:text-gray-300">When are alerts created?</p>
+          <p className="font-semibold text-ink dark:text-gray-300">When are notifications created?</p>
           <p>Site score drops ≥ 5 points · Total violations increase ≥ 10 · New critical issues introduced · Page regressions detected</p>
           <p>These thresholds are configurable via environment variables: <code className="font-mono text-[10px]">ALERT_SCORE_DROP_THRESHOLD</code>, <code className="font-mono text-[10px]">ALERT_VIOLATION_INCREASE_THRESHOLD</code></p>
         </div>

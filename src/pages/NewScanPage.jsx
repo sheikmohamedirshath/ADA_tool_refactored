@@ -154,6 +154,8 @@ export default function NewScanPage() {
                 scanRan={scanRan}
                 scanUrl={scanUrl}
                 onReset={resetScan}
+                screenshot={scanResult?.axeResult?.screenshot}
+                screenshotType={scanResult?.axeResult?.screenshotType}
               />
             )}
           </>

@@ -170,7 +170,7 @@ function AuthRequiredModal({ onLogin, onSignup, onClose }) {
 }
 
 export default function LandingPage({ onOpenApp, dark, toggleDark }) {
-  const { navigate, isAuthenticated } = useApp();
+  const { navigate, isAuthenticated, setPostAuthRedirect } = useApp();
   const [showAuthModal, setShowAuthModal] = useState(false);
 
   function handleProtectedCta(destination) {
@@ -178,6 +178,7 @@ export default function LandingPage({ onOpenApp, dark, toggleDark }) {
       if (destination === 'scan') navigate('new-scan');
       else navigate('dashboard');
     } else {
+      setPostAuthRedirect(destination === 'scan' ? 'new-scan' : null);
       setShowAuthModal(true);
     }
   }

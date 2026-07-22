@@ -1,6 +1,6 @@
 import {
-  LayoutDashboard, Globe, Wand2, Settings, X,
-  ScanLine, History, CalendarClock, BellRing, Mail, ClipboardList, LogOut, BookOpen, Plug,
+  LayoutDashboard, Wand2, Settings, X,
+  ScanLine, History, CalendarClock, BellRing, ClipboardList, LogOut, BookOpen, Plug,
 } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 import BrandLogo from '../ui/BrandLogo';
@@ -17,15 +17,13 @@ const NAV_SECTIONS = [
     items: [
       { id: 'new-scan',      label: 'Run Audit',     icon: ScanLine  },
       { id: 'scan-history',  label: 'Scan History',  icon: History   },
-      { id: 'crawl-history', label: 'Crawl History', icon: Globe     },
     ],
   },
   {
     label: 'Monitoring',
     items: [
       { id: 'crawl-schedules', label: 'Schedules',     icon: CalendarClock },
-      { id: 'alerts',          label: 'Alerts',        icon: BellRing      },
-      { id: 'digest-history',  label: 'Weekly Digest', icon: Mail          },
+      { id: 'alerts',          label: 'Notifications', icon: BellRing      },
     ],
   },
   {
@@ -53,7 +51,7 @@ const NAV_SECTIONS = [
 function isNavActive(navId, activePage) {
   if (navId === activePage) return true;
   if (navId === 'new-scan' && activePage === 'crawl-results') return true;
-  if (navId === 'crawl-history' && activePage === 'executive-summary') return true;
+  if (navId === 'scan-history' && activePage === 'executive-summary') return true;
   // backward compat: /keyboard-test route still highlights the Assistive Testing item
   if (navId === 'assistive-test' && activePage === 'keyboard-test') return true;
   return false;

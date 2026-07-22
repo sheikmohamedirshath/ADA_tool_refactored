@@ -2,21 +2,22 @@ import React, { createContext, useContext, useState, useEffect, useCallback } fr
 
 const CRAWL_ID_KEY = 'ada_crawl_id';
 const AUTH_KEY     = 'ada_auth';
+const POST_AUTH_REDIRECT_KEY = 'ada_post_auth_redirect';
 
 const PAGE_TO_PATH = {
   landing:              '/',
   login:                '/login',
   signup:               '/signup',
   'verify-email':       '/verify-email',
+  'forgot-password':    '/forgot-password',
+  'reset-password':     '/reset-password',
   dashboard:            '/dashboard',
   'new-scan':           '/new-scan',
   'scan-history':       '/scan-history',
-  'crawl-history':      '/crawl-history',
   'crawl-results':      '/crawl-results',
   'crawl-schedules':    '/crawl-schedules',
   'executive-summary':  '/executive-summary',
   alerts:               '/alerts',
-  'digest-history':     '/digest-history',
   'keyboard-test':      '/keyboard-test',   // legacy route — kept for backward compat
   'assistive-test':     '/assistive-test',
   'assistive-results':  '/assistive-results',
@@ -45,6 +46,10 @@ function getInitialPage() {
 
 function readStoredCrawlId() {
   try { return sessionStorage.getItem(CRAWL_ID_KEY) || null; } catch { return null; }
+}
+
+function readStoredPostAuthRedirect() {
+  try { return sessionStorage.getItem(POST_AUTH_REDIRECT_KEY) || null; } catch { return null; }
 }
 
 function readStoredAuth() {
@@ -79,6 +84,8 @@ export const AppContext = createContext({
   crawlId: null,
   setCrawlId: () => {},
   clearCrawlId: () => {},
+  postAuthRedirect: null,
+  setPostAuthRedirect: () => {},
   sidebarOpen: true,
   setSidebarOpen: () => {},
   scanHistoryId: null,
@@ -89,6 +96,8 @@ export const AppContext = createContext({
   setPendingAssistiveUrl: () => {},
   pendingAssistiveModule: null,
   setPendingAssistiveModule: () => {},
+  pendingScanHistoryTab: null,
+  setPendingScanHistoryTab: () => {},
   assistiveResult: null,
   setAssistiveResult: () => {},
   user: null,
@@ -102,11 +111,13 @@ export function AppProvider({ children }) {
   const [dark, setDark] = useState(false);
   const [activePage, setActivePage] = useState(getInitialPage);
   const [crawlId, setCrawlIdState] = useState(readStoredCrawlId);
+  const [postAuthRedirect, setPostAuthRedirectState] = useState(readStoredPostAuthRedirect);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [scanHistoryId, setScanHistoryId] = useState(null);
   const [wcagCriterionId, setWcagCriterionId] = useState(null);
   const [pendingAssistiveUrl, setPendingAssistiveUrl] = useState('');
   const [pendingAssistiveModule, setPendingAssistiveModule] = useState(null);
+  const [pendingScanHistoryTab, setPendingScanHistoryTab] = useState(null);
   const [assistiveResult, setAssistiveResult] = useState(null);
 
   const stored = readStoredAuth();
@@ -135,6 +146,14 @@ export function AppProvider({ children }) {
 
   function clearCrawlId() {
     setCrawlId(null);
+  }
+
+  function setPostAuthRedirect(page) {
+    try {
+      if (page) sessionStorage.setItem(POST_AUTH_REDIRECT_KEY, page);
+      else sessionStorage.removeItem(POST_AUTH_REDIRECT_KEY);
+    } catch {}
+    setPostAuthRedirectState(page);
   }
 
   function navigate(page) {
@@ -189,6 +208,8 @@ export function AppProvider({ children }) {
         crawlId,
         setCrawlId,
         clearCrawlId,
+        postAuthRedirect,
+        setPostAuthRedirect,
         sidebarOpen,
         setSidebarOpen,
         scanHistoryId,
@@ -199,6 +220,8 @@ export function AppProvider({ children }) {
         setPendingAssistiveUrl,
         pendingAssistiveModule,
         setPendingAssistiveModule,
+        pendingScanHistoryTab,
+        setPendingScanHistoryTab,
         assistiveResult,
         setAssistiveResult,
         user,

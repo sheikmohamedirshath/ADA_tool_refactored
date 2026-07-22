@@ -2,6 +2,7 @@ import { apiFetch } from '../../utils/api';
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { CheckCircle, AlertTriangle, RotateCcw, Monitor, Shield, Search, History, Play } from 'lucide-react';
 import ViolationRow from './ViolationList';
+import ScreenshotModal from './ScreenshotModal';
 import {
   nsComputeScore, nsScoreGradeInfo, nsScoreMessage,
   nsBuildSeverityBreakdown, nsBuildTopIssues,
@@ -333,9 +334,12 @@ function ViewportComparisonPanel({ scanUrl, currentViolations }) {
 
 // ─── Main scan results view ──────────────────────────────────────────────────
 
-export default function ScanResults({ violations, incomplete, passes, scanRan, scanUrl, onReset }) {
+export default function ScanResults({ violations, incomplete, passes, scanRan, scanUrl, onReset, screenshot, screenshotType }) {
   const { navigate, setPendingAssistiveUrl } = useApp();
   const [filterImpact, setFilterImpact] = useState('all');
+  const [pageScreenshotOpen, setPageScreenshotOpen] = useState(false);
+  const hasPageScreenshot = typeof screenshot === 'string' && screenshot.trim().length > 0;
+  const pageScreenshotType = (typeof screenshotType === 'string' && screenshotType.trim()) || 'image/jpeg';
   const [groupMode, setGroupMode]       = useState('rule');
   const [searchQuery, setSearchQuery]   = useState('');
   const [wcagFilter, setWcagFilter]     = useState('all');
@@ -550,6 +554,21 @@ export default function ScanResults({ violations, incomplete, passes, scanRan, s
           </div>
         )}
       </div>
+
+      {/* Page screenshot */}
+      {hasPageScreenshot && (
+        <div className="bg-white dark:bg-charcoal rounded-2xl border border-gray-100 dark:border-white/[0.06] shadow-soft p-6">
+          <p className="font-heading font-semibold text-base text-ink dark:text-white mb-1">Page screenshot</p>
+          <p className="text-xs text-body dark:text-gray-500 mb-3">View the page as it was when the accessibility check ran.</p>
+          <button
+            type="button"
+            onClick={() => setPageScreenshotOpen(true)}
+            className="btn-secondary text-sm"
+          >
+            View page screenshot
+          </button>
+        </div>
+      )}
 
       {/* Score + Severity Distribution */}
       {scanRan && (
@@ -815,6 +834,14 @@ export default function ScanResults({ violations, incomplete, passes, scanRan, s
       )}
 
       </div>{/* end main content wrapper */}
+
+      {pageScreenshotOpen && hasPageScreenshot && (
+        <ScreenshotModal
+          src={`data:${pageScreenshotType};base64,${screenshot.trim()}`}
+          title="Page as tested"
+          onClose={() => setPageScreenshotOpen(false)}
+        />
+      )}
     </div>
   );
 }

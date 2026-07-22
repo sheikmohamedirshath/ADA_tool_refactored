@@ -102,7 +102,7 @@ class TestTick:
             {"id": 10, "root_url": "https://example.com", "frequency": "weekly"}
         ])
         _tick(db)
-        db.mark_schedule_ran.assert_called_once_with(10, "weekly")
+        db.mark_schedule_ran.assert_called_once_with(10, "weekly", time_of_day=None)
 
     def test_skips_create_when_crawl_already_active(self):
         db = _make_db(
@@ -119,7 +119,7 @@ class TestTick:
             active=True,
         )
         _tick(db)
-        db.mark_schedule_ran.assert_called_once_with(30, "monthly")
+        db.mark_schedule_ran.assert_called_once_with(30, "monthly", time_of_day=None)
 
     def test_processes_multiple_due_schedules(self):
         db = _make_db(due_schedules=[

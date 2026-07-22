@@ -263,6 +263,20 @@ def _ensure_table() -> None:
             )
         """)
         conn.commit()
+        # ── CrawlSchedule schema evolution ─────────────────────────────────────
+        _crawl_schedule_columns = [
+            ("Name",       "NVARCHAR(120) NULL"),
+            ("TimeOfDay",  "TIME NULL"),
+        ]
+        for col, defn in _crawl_schedule_columns:
+            cur.execute(f"""
+                IF NOT EXISTS (
+                    SELECT 1 FROM sys.columns
+                    WHERE object_id = OBJECT_ID(N'dbo.CrawlSchedule') AND name = N'{col}'
+                )
+                ALTER TABLE dbo.CrawlSchedule ADD {col} {defn}
+            """)
+            conn.commit()
         cur.execute("""
             IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = N'AccessibilityAlert')
             CREATE TABLE dbo.AccessibilityAlert (
@@ -283,19 +297,6 @@ def _ensure_table() -> None:
                 WHERE object_id = OBJECT_ID(N'dbo.AccessibilityAlert') AND name = N'IX_Alert_Status'
             )
             CREATE INDEX IX_Alert_Status ON dbo.AccessibilityAlert(Status, CreatedAt DESC)
-        """)
-        conn.commit()
-        cur.execute("""
-            IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = N'DigestHistory')
-            CREATE TABLE dbo.DigestHistory (
-                Id          INT IDENTITY(1,1) PRIMARY KEY,
-                WeekStart   DATE           NOT NULL,
-                WeekEnd     DATE           NOT NULL,
-                DigestData  NVARCHAR(MAX)  NULL,
-                SentAt      DATETIME2(3)   NULL,
-                EmailSentTo NVARCHAR(500)  NULL,
-                CreatedAt   DATETIME2(3)   NOT NULL DEFAULT GETUTCDATE()
-            )
         """)
         conn.commit()
         # ── AssistiveScanHistory table ────────────────────────────────────────
@@ -370,6 +371,8 @@ def _ensure_table() -> None:
             ("VerifyTokenExpiry", "DATETIME2(3) NULL"),
             ("AuthProvider",      "NVARCHAR(50) NULL"),
             ("ProviderUserId",    "NVARCHAR(256) NULL"),
+            ("ResetToken",        "NVARCHAR(128) NULL"),
+            ("ResetTokenExpiry",  "DATETIME2(3) NULL"),
         ]
         for col, defn in _user_columns:
             cur.execute(f"""
@@ -387,6 +390,15 @@ def _ensure_table() -> None:
             )
             CREATE INDEX IX_Users_VerifyToken ON dbo.Users (VerifyToken)
             WHERE VerifyToken IS NOT NULL
+        """)
+        conn.commit()
+        cur.execute("""
+            IF NOT EXISTS (
+                SELECT 1 FROM sys.indexes
+                WHERE object_id = OBJECT_ID(N'dbo.Users') AND name = N'IX_Users_ResetToken'
+            )
+            CREATE INDEX IX_Users_ResetToken ON dbo.Users (ResetToken)
+            WHERE ResetToken IS NOT NULL
         """)
         conn.commit()
         # ── Integrations (Slack / Teams) ──────────────────────────────────────
@@ -618,6 +630,78 @@ def get_verify_token_issued_at(user_id: int):
         cur = conn.cursor()
         cur.execute(
             "SELECT VerifyTokenExpiry FROM dbo.Users WHERE Id = ?",
+            user_id,
+        )
+        row = cur.fetchone()
+        return row[0] if row else None
+    finally:
+        conn.close()
+
+
+def set_reset_token(user_id: int, token: str, expiry_utc) -> None:
+    """Store a password-reset token and its expiry on the given user."""
+    conn = _conn()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "UPDATE dbo.Users SET ResetToken = ?, ResetTokenExpiry = ? WHERE Id = ?",
+            token, expiry_utc, user_id,
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def get_user_by_reset_token(token: str) -> dict | None:
+    """Return the user whose ResetToken matches and has not yet expired, or None."""
+    conn = _conn()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            """SELECT Id, FirstName, LastName, Email, ResetTokenExpiry
+               FROM dbo.Users
+               WHERE ResetToken = ? AND ResetTokenExpiry > GETUTCDATE()""",
+            token,
+        )
+        row = cur.fetchone()
+        if not row:
+            return None
+        return {
+            "id": row[0],
+            "firstName": row[1],
+            "lastName": row[2],
+            "email": row[3],
+            "resetTokenExpiry": row[4].isoformat() if row[4] else None,
+        }
+    finally:
+        conn.close()
+
+
+def reset_user_password(user_id: int, password_hash: str) -> None:
+    """Update the user's password hash and clear the reset token."""
+    conn = _conn()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            """UPDATE dbo.Users
+               SET PasswordHash = ?,
+                   ResetToken = NULL,
+                   ResetTokenExpiry = NULL
+               WHERE Id = ?""",
+            password_hash, user_id,
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def get_reset_token_issued_at(user_id: int):
+    """Return ResetTokenExpiry for rate-limiting forgot-password requests, or None."""
+    conn = _conn()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT ResetTokenExpiry FROM dbo.Users WHERE Id = ?",
             user_id,
         )
         row = cur.fetchone()
@@ -1965,31 +2049,59 @@ def get_crawl_score_timeline(root_url: str, limit: int = 20) -> list[dict]:
 # Phase 3 — CrawlSchedule
 # ═══════════════════════════════════════════════════════════════════════════
 
-def _compute_next_run(frequency: str, from_dt=None):
+def _compute_next_run(frequency: str, from_dt=None, time_of_day=None):
     from datetime import timezone, timedelta
     now = from_dt or datetime.now(timezone.utc)
     if frequency == "daily":
-        return now + timedelta(days=1)
+        next_run = now + timedelta(days=1)
     elif frequency == "monthly":
-        return now + timedelta(days=30)
-    return now + timedelta(weeks=1)
+        next_run = now + timedelta(days=30)
+    else:
+        next_run = now + timedelta(weeks=1)
+    if time_of_day is not None:
+        next_run = next_run.replace(
+            hour=time_of_day.hour, minute=time_of_day.minute, second=0, microsecond=0
+        )
+    return next_run
 
 
-def create_crawl_schedule(root_url: str, frequency: str = "weekly") -> dict | None:
+def _time_str(value) -> str | None:
+    """Format a TIME column value ('HH:MM') or return None."""
+    if value is None:
+        return None
+    if hasattr(value, "hour"):
+        return f"{value.hour:02d}:{value.minute:02d}"
+    return str(value)[:5]
+
+
+def parse_time_of_day(value: str):
+    """Parse an 'HH:MM' string into a datetime.time, or None if blank/invalid."""
+    from datetime import time as _dtime
+    if not value:
+        return None
+    try:
+        hh, mm = value.strip().split(":")[:2]
+        return _dtime(int(hh), int(mm))
+    except (ValueError, TypeError):
+        return None
+
+
+def create_crawl_schedule(root_url: str, frequency: str = "weekly", name: str | None = None,
+                           time_of_day=None) -> dict | None:
     if not is_enabled() or _INIT_ERROR:
         return None
     frequency = frequency if frequency in ("daily", "weekly", "monthly") else "weekly"
-    next_run = _compute_next_run(frequency)
+    next_run = _compute_next_run(frequency, time_of_day=time_of_day)
     conn = _conn()
     try:
         with conn.cursor() as cur:
             cur.execute(
                 """
-                INSERT INTO dbo.CrawlSchedule (RootUrl, Frequency, Enabled, NextRunAt)
+                INSERT INTO dbo.CrawlSchedule (RootUrl, Frequency, Enabled, NextRunAt, Name, TimeOfDay)
                 OUTPUT INSERTED.Id, INSERTED.CreatedAt
-                VALUES (?, ?, 1, ?)
+                VALUES (?, ?, 1, ?, ?, ?)
                 """,
-                (root_url, frequency, next_run),
+                (root_url, frequency, next_run, name, time_of_day),
             )
             row = cur.fetchone()
             conn.commit()
@@ -1998,6 +2110,8 @@ def create_crawl_schedule(root_url: str, frequency: str = "weekly") -> dict | No
             "root_url": root_url,
             "frequency": frequency,
             "enabled": True,
+            "name": name,
+            "time_of_day": _time_str(time_of_day),
             "last_run_at": None,
             "next_run_at": _ts(next_run),
             "created_at": _ts(row[1]),
@@ -2014,14 +2128,23 @@ def get_crawl_schedules() -> list[dict]:
         with conn.cursor() as cur:
             cur.execute(
                 """
-                SELECT Id, RootUrl, Frequency, Enabled, LastRunAt, NextRunAt, CreatedAt
-                FROM dbo.CrawlSchedule
-                ORDER BY CreatedAt DESC
+                SELECT s.Id, s.RootUrl, s.Frequency, s.Enabled, s.LastRunAt, s.NextRunAt,
+                       s.CreatedAt, s.Name, s.TimeOfDay,
+                       (SELECT COUNT(1) FROM dbo.CrawlJob cj
+                        WHERE cj.RootUrl = s.RootUrl AND cj.Status IN ('pending', 'running')) AS ActiveCount,
+                       (SELECT TOP 1 cj2.Status FROM dbo.CrawlJob cj2
+                        WHERE cj2.RootUrl = s.RootUrl ORDER BY cj2.CreatedAt DESC) AS LastRunStatus,
+                       (SELECT TOP 1 cj3.CrawlId FROM dbo.CrawlJob cj3
+                        WHERE cj3.RootUrl = s.RootUrl ORDER BY cj3.CreatedAt DESC) AS LastRunCrawlId
+                FROM dbo.CrawlSchedule s
+                ORDER BY s.CreatedAt DESC
                 """
             )
             rows = cur.fetchall()
-        return [
-            {
+        result = []
+        for r in rows:
+            is_running = (r[9] or 0) > 0
+            result.append({
                 "id": r[0],
                 "root_url": r[1],
                 "frequency": r[2],
@@ -2029,6 +2152,89 @@ def get_crawl_schedules() -> list[dict]:
                 "last_run_at": _ts(r[4]),
                 "next_run_at": _ts(r[5]),
                 "created_at": _ts(r[6]),
+                "name": r[7],
+                "time_of_day": _time_str(r[8]),
+                "status": "running" if is_running else ("active" if bool(r[3]) else "paused"),
+                "last_run_status": r[10],
+                "last_run_crawl_id": r[11],
+            })
+        return result
+    finally:
+        conn.close()
+
+
+def get_crawl_schedule(schedule_id: int) -> dict | None:
+    if not is_enabled() or _INIT_ERROR:
+        return None
+    conn = _conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT Id, RootUrl, Frequency, Enabled, Name, TimeOfDay FROM dbo.CrawlSchedule WHERE Id = ?",
+                (schedule_id,),
+            )
+            row = cur.fetchone()
+        if not row:
+            return None
+        return {
+            "id": row[0],
+            "root_url": row[1],
+            "frequency": row[2],
+            "enabled": bool(row[3]),
+            "name": row[4],
+            "time_of_day": _time_str(row[5]),
+        }
+    finally:
+        conn.close()
+
+
+def get_active_crawl_id_for_url(root_url: str) -> str | None:
+    """Return the crawl_id of the currently running/pending crawl for root_url, if any."""
+    if not is_enabled() or _INIT_ERROR:
+        return None
+    conn = _conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT TOP 1 CrawlId FROM dbo.CrawlJob
+                WHERE RootUrl = ? AND Status IN ('pending', 'running')
+                ORDER BY CreatedAt DESC
+                """,
+                (root_url,),
+            )
+            row = cur.fetchone()
+        return row[0] if row else None
+    finally:
+        conn.close()
+
+
+def get_schedule_runs(root_url: str, limit: int = 5) -> list[dict]:
+    """Return the most recent crawl runs for a schedule's root URL."""
+    if not is_enabled() or _INIT_ERROR:
+        return []
+    conn = _conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT TOP (?) CrawlId, Status, TotalScanned, TotalFailed, CreatedAt, EndedAt, DurationSeconds
+                FROM dbo.CrawlJob
+                WHERE RootUrl = ?
+                ORDER BY CreatedAt DESC
+                """,
+                (limit, root_url),
+            )
+            rows = cur.fetchall()
+        return [
+            {
+                "crawl_id": r[0],
+                "status": r[1],
+                "total_scanned": r[2],
+                "total_failed": r[3],
+                "created_at": _ts(r[4]),
+                "ended_at": _ts(r[5]),
+                "duration_seconds": r[6],
             }
             for r in rows
         ]
@@ -2045,21 +2251,21 @@ def get_due_schedules() -> list[dict]:
         with conn.cursor() as cur:
             cur.execute(
                 """
-                SELECT Id, RootUrl, Frequency
+                SELECT Id, RootUrl, Frequency, TimeOfDay
                 FROM dbo.CrawlSchedule
                 WHERE Enabled = 1 AND NextRunAt <= GETUTCDATE()
                 """
             )
             rows = cur.fetchall()
-        return [{"id": r[0], "root_url": r[1], "frequency": r[2]} for r in rows]
+        return [{"id": r[0], "root_url": r[1], "frequency": r[2], "time_of_day": r[3]} for r in rows]
     finally:
         conn.close()
 
 
-def mark_schedule_ran(schedule_id: int, frequency: str) -> bool:
+def mark_schedule_ran(schedule_id: int, frequency: str, time_of_day=None) -> bool:
     if not is_enabled() or _INIT_ERROR:
         return False
-    next_run = _compute_next_run(frequency)
+    next_run = _compute_next_run(frequency, time_of_day=time_of_day)
     conn = _conn()
     try:
         with conn.cursor() as cur:
@@ -2081,17 +2287,38 @@ def mark_schedule_ran(schedule_id: int, frequency: str) -> bool:
 
 
 def update_crawl_schedule(schedule_id: int, **kwargs) -> bool:
-    """Update Enabled and/or Frequency for a schedule."""
+    """Update Name, Enabled, Frequency, and/or TimeOfDay for a schedule."""
     if not is_enabled() or _INIT_ERROR:
         return False
     allowed = {}
     if "enabled" in kwargs:
         allowed["Enabled"] = 1 if kwargs["enabled"] else 0
-    if "frequency" in kwargs:
-        freq = kwargs["frequency"]
-        if freq in ("daily", "weekly", "monthly"):
-            allowed["Frequency"] = freq
-            allowed["NextRunAt"] = _compute_next_run(freq)
+    if "name" in kwargs:
+        allowed["Name"] = kwargs["name"]
+
+    freq_changed = "frequency" in kwargs and kwargs["frequency"] in ("daily", "weekly", "monthly")
+    tod_changed = "time_of_day" in kwargs
+    if freq_changed or tod_changed:
+        conn = _conn()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT Frequency, TimeOfDay FROM dbo.CrawlSchedule WHERE Id = ?",
+                    (schedule_id,),
+                )
+                row = cur.fetchone()
+        finally:
+            conn.close()
+        if not row:
+            return False
+        frequency = kwargs["frequency"] if freq_changed else row[0]
+        time_of_day = kwargs["time_of_day"] if tod_changed else row[1]
+        if freq_changed:
+            allowed["Frequency"] = frequency
+        if tod_changed:
+            allowed["TimeOfDay"] = time_of_day
+        allowed["NextRunAt"] = _compute_next_run(frequency, time_of_day=time_of_day)
+
     if not allowed:
         return False
     set_parts = ", ".join(f"{k} = ?" for k in allowed)
@@ -2301,128 +2528,6 @@ def get_unacknowledged_alert_count() -> int:
             cur.execute("SELECT COUNT(1) FROM dbo.AccessibilityAlert WHERE Status = 'active'")
             row = cur.fetchone()
         return int(row[0]) if row else 0
-    finally:
-        conn.close()
-
-
-# ═══════════════════════════════════════════════════════════════════════════
-# Phase 3 — DigestHistory
-# ═══════════════════════════════════════════════════════════════════════════
-
-def create_digest(week_start, week_end, digest_data: dict) -> int | None:
-    if not is_enabled() or _INIT_ERROR:
-        return None
-    conn = _conn()
-    try:
-        with conn.cursor() as cur:
-            cur.execute(
-                """
-                INSERT INTO dbo.DigestHistory (WeekStart, WeekEnd, DigestData)
-                OUTPUT INSERTED.Id
-                VALUES (?, ?, ?)
-                """,
-                (week_start, week_end, json.dumps(digest_data)),
-            )
-            row = cur.fetchone()
-            conn.commit()
-        return row[0] if row else None
-    except Exception:
-        logger.exception("create_digest failed")
-        return None
-    finally:
-        conn.close()
-
-
-def get_digests(limit: int = 12) -> list[dict]:
-    if not is_enabled() or _INIT_ERROR:
-        return []
-    conn = _conn()
-    try:
-        with conn.cursor() as cur:
-            cur.execute(
-                """
-                SELECT TOP (?) Id, WeekStart, WeekEnd, DigestData, SentAt, EmailSentTo, CreatedAt
-                FROM dbo.DigestHistory ORDER BY CreatedAt DESC
-                """,
-                (limit,),
-            )
-            rows = cur.fetchall()
-        out = []
-        for r in rows:
-            data = {}
-            try:
-                if r[3]:
-                    data = json.loads(r[3])
-            except Exception:
-                pass
-            out.append({
-                "id": r[0],
-                "week_start": str(r[1]) if r[1] else None,
-                "week_end": str(r[2]) if r[2] else None,
-                "digest_data": data,
-                "sent_at": _ts(r[4]),
-                "email_sent_to": r[5],
-                "created_at": _ts(r[6]),
-            })
-        return out
-    finally:
-        conn.close()
-
-
-def update_digest_sent(digest_id: int, sent_at, email_sent_to: str) -> bool:
-    if not is_enabled() or _INIT_ERROR:
-        return False
-    conn = _conn()
-    try:
-        with conn.cursor() as cur:
-            cur.execute(
-                "UPDATE dbo.DigestHistory SET SentAt = ?, EmailSentTo = ? WHERE Id = ?",
-                (sent_at, email_sent_to, digest_id),
-            )
-            conn.commit()
-        return True
-    except Exception:
-        return False
-    finally:
-        conn.close()
-
-
-def get_weekly_crawl_data(week_start, week_end) -> list[dict]:
-    """Return completed crawls in the given date range, grouped by root URL."""
-    if not is_enabled() or _INIT_ERROR:
-        return []
-    conn = _conn()
-    try:
-        with conn.cursor() as cur:
-            cur.execute(
-                """
-                SELECT RootUrl, COUNT(*) AS CrawlCount, Metadata, MAX(CreatedAt) AS LastRun
-                FROM dbo.CrawlJob
-                WHERE Status = 'completed'
-                  AND CreatedAt >= ? AND CreatedAt <= ?
-                GROUP BY RootUrl, Metadata
-                ORDER BY MAX(CreatedAt) DESC
-                """,
-                (week_start, week_end),
-            )
-            rows = cur.fetchall()
-        out = []
-        for r in rows:
-            meta = {}
-            try:
-                if r[2]:
-                    meta = json.loads(r[2])
-            except Exception:
-                pass
-            out.append({
-                "root_url": r[0],
-                "crawl_count": int(r[1]),
-                "site_score": meta.get("site_score"),
-                "avg_pass_rate": meta.get("avg_pass_rate"),
-                "total_violations": meta.get("total_violations"),
-                "last_run": _ts(r[3]),
-            })
-        return out
     finally:
         conn.close()
 

@@ -4,6 +4,7 @@ import { Search, ChevronLeft, ChevronRight, Keyboard, Eye, RotateCcw, AlignLeft 
 import { formatDateTime } from '../../utils/format'
 import GlowInput from '../ui/GlowInput'
 import { useApp } from '../../context/AppContext'
+import { CrawlHistoryContent } from './CrawlHistoryContent'
 
 const PAGE_SIZE = 50
 
@@ -523,14 +524,24 @@ function AssistiveTestsTab() {
 const TABS = [
   { id: 'ada',       label: 'ADA Scans' },
   { id: 'assistive', label: 'Assistive Tests' },
+  { id: 'crawls',    label: 'Crawls' },
 ]
 
 export default function ScanHistoryView({ onScanClick }) {
+  const { pendingScanHistoryTab, setPendingScanHistoryTab } = useApp()
   const [activeTab, setActiveTab] = useState('ada')
+
+  useEffect(() => {
+    if (pendingScanHistoryTab) {
+      setActiveTab(pendingScanHistoryTab)
+      setPendingScanHistoryTab(null)
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   return (
     <main className="flex-1 overflow-auto bg-ivory dark:bg-night p-6 min-h-0" role="main">
-      <div className="max-w-[960px] mx-auto">
+      <div className={activeTab === 'crawls' ? 'max-w-[1100px] mx-auto' : 'max-w-[960px] mx-auto'}>
 
         <h1 className="text-[1.75rem] font-bold text-ink dark:text-white mt-0 mb-2">
           Scan History
@@ -559,6 +570,7 @@ export default function ScanHistoryView({ onScanClick }) {
 
         {activeTab === 'ada' && <AdaScansTab onScanClick={onScanClick} />}
         {activeTab === 'assistive' && <AssistiveTestsTab />}
+        {activeTab === 'crawls' && <CrawlHistoryContent />}
 
       </div>
     </main>

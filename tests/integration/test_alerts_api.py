@@ -1,12 +1,10 @@
 """
-Integration tests for alerts, digests, and crawl schedule endpoints.
+Integration tests for alerts and crawl schedule endpoints.
 
 Endpoints covered:
   GET   /api/alerts
   PATCH /api/alerts/<id>/acknowledge
   GET   /api/alerts/unread-count
-  GET   /api/digests
-  POST  /api/digests/trigger
   GET   /api/crawl-schedules
   POST  /api/crawl-schedules
   PATCH /api/crawl-schedules/<id>
@@ -104,62 +102,6 @@ class TestAlertsUnreadCount:
         assert resp.status_code == 401
 
 
-# ── /api/digests ──────────────────────────────────────────────────────────────
-
-class TestDigests:
-    def test_list_returns_items(self, client, db_mock, authed_headers):
-        db_mock.get_digests.return_value = [
-            {"id": 1, "period_start": "2026-06-01", "period_end": "2026-06-07"},
-        ]
-        resp = client.get("/api/digests", headers=authed_headers)
-        assert resp.status_code == 200
-        data = resp.get_json()
-        assert data["ok"] is True
-        assert len(data["items"]) == 1
-
-    def test_db_unavailable_returns_empty(self, client, db_mock, authed_headers):
-        db_mock.is_ready.return_value = False
-        resp = client.get("/api/digests", headers=authed_headers)
-        assert resp.status_code == 200
-        assert resp.get_json()["available"] is False
-        db_mock.is_ready.return_value = True
-
-    def test_no_auth_401(self, client):
-        resp = client.get("/api/digests")
-        assert resp.status_code == 401
-
-
-class TestDigestsTrigger:
-    def test_trigger_creates_digest(self, client, db_mock, authed_headers):
-        fake_digest = {"id": 1, "period_start": "2026-06-07", "period_end": "2026-06-13"}
-        with patch("backend.services.digest_service.generate_weekly_digest",
-                   return_value=fake_digest):
-            resp = client.post("/api/digests/trigger",
-                               json={"send_email": False},
-                               headers=authed_headers)
-        assert resp.status_code == 200
-        assert resp.get_json()["ok"] is True
-
-    def test_no_data_returns_error(self, client, db_mock, authed_headers):
-        with patch("backend.services.digest_service.generate_weekly_digest",
-                   return_value=None):
-            resp = client.post("/api/digests/trigger",
-                               json={},
-                               headers=authed_headers)
-        assert resp.status_code == 200
-        assert resp.get_json()["ok"] is False
-
-    def test_db_unavailable_503(self, client, db_mock, authed_headers):
-        db_mock.is_ready.return_value = False
-        resp = client.post("/api/digests/trigger", json={}, headers=authed_headers)
-        assert resp.status_code == 503
-        db_mock.is_ready.return_value = True
-
-    def test_no_auth_401(self, client):
-        resp = client.post("/api/digests/trigger", json={})
-        assert resp.status_code == 401
-
-
 # ── /api/crawl-schedules ──────────────────────────────────────────────────────
 
 class TestCrawlSchedules:
@@ -194,7 +136,7 @@ class TestCrawlSchedules:
             "id": 1, "url": "https://example.com", "frequency": "weekly"
         }
         captured = {}
-        def _cap(url, freq):
+        def _cap(url, freq, **kwargs):
             captured["freq"] = freq
             return {"id": 1, "url": url, "frequency": freq}
         db_mock.create_crawl_schedule.side_effect = _cap
@@ -220,12 +162,67 @@ class TestCrawlSchedules:
         assert resp.status_code == 200
         assert resp.get_json()["ok"] is True
 
+    def test_run_now_success(self, client, db_mock, authed_headers):
+        with patch("app.create_crawl_job", return_value={"crawl_id": "crawl-abc"}):
+            resp = client.post("/api/crawl-schedules/1/run-now", headers=authed_headers)
+        assert resp.status_code == 201
+        data = resp.get_json()
+        assert data["ok"] is True
+        assert data["crawl_id"] == "crawl-abc"
+
+    def test_run_now_schedule_not_found_404(self, client, db_mock, authed_headers):
+        db_mock.get_crawl_schedule.return_value = None
+        resp = client.post("/api/crawl-schedules/999/run-now", headers=authed_headers)
+        assert resp.status_code == 404
+
+    def test_run_now_already_active_409(self, client, db_mock, authed_headers):
+        db_mock.has_active_crawl_for_url.return_value = True
+        resp = client.post("/api/crawl-schedules/1/run-now", headers=authed_headers)
+        assert resp.status_code == 409
+
+    def test_stop_success(self, client, db_mock, authed_headers):
+        db_mock.get_active_crawl_id_for_url.return_value = "crawl-abc"
+        with patch("app.cancel_crawl_job", return_value=True):
+            resp = client.post("/api/crawl-schedules/1/stop", headers=authed_headers)
+        assert resp.status_code == 200
+        assert resp.get_json()["ok"] is True
+
+    def test_stop_no_active_run_404(self, client, db_mock, authed_headers):
+        db_mock.get_active_crawl_id_for_url.return_value = None
+        resp = client.post("/api/crawl-schedules/1/stop", headers=authed_headers)
+        assert resp.status_code == 404
+
+    def test_stop_schedule_not_found_404(self, client, db_mock, authed_headers):
+        db_mock.get_crawl_schedule.return_value = None
+        resp = client.post("/api/crawl-schedules/1/stop", headers=authed_headers)
+        assert resp.status_code == 404
+
+    def test_runs_success(self, client, db_mock, authed_headers):
+        db_mock.get_schedule_runs.return_value = [
+            {"crawl_id": "crawl-abc", "status": "completed", "total_scanned": 5,
+             "total_failed": 0, "created_at": "2026-07-01T00:00:00Z",
+             "ended_at": "2026-07-01T00:05:00Z", "duration_seconds": 300},
+        ]
+        resp = client.get("/api/crawl-schedules/1/runs", headers=authed_headers)
+        assert resp.status_code == 200
+        data = resp.get_json()
+        assert data["ok"] is True
+        assert len(data["items"]) == 1
+
+    def test_runs_schedule_not_found_404(self, client, db_mock, authed_headers):
+        db_mock.get_crawl_schedule.return_value = None
+        resp = client.get("/api/crawl-schedules/1/runs", headers=authed_headers)
+        assert resp.status_code == 404
+
     def test_no_auth_401(self, client):
         for method, url in [
             ("GET",    "/api/crawl-schedules"),
             ("POST",   "/api/crawl-schedules"),
             ("PATCH",  "/api/crawl-schedules/1"),
             ("DELETE", "/api/crawl-schedules/1"),
+            ("POST",   "/api/crawl-schedules/1/run-now"),
+            ("POST",   "/api/crawl-schedules/1/stop"),
+            ("GET",    "/api/crawl-schedules/1/runs"),
         ]:
             resp = getattr(client, method.lower())(url)
             assert resp.status_code == 401, f"{method} {url} should be 401"

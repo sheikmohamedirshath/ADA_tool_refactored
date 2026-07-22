@@ -120,7 +120,15 @@ def run_axe_playwright(url: str, include_best_practices: bool = False) -> dict:
                     el.style.setProperty('outline', '5px solid #dc2626');
                     el.style.setProperty('outline-offset', '3px');
                     el.style.setProperty('box-shadow', '0 0 0 6px rgba(220, 38, 38, 0.6)');
-                    el.style.setProperty('position', 'relative');
+                    // Only force 'relative' when the element has no positioning of its
+                    // own (position: static) — z-index is a no-op there otherwise.
+                    // Elements that are already fixed/absolute/sticky/relative must be
+                    // left alone, since overriding e.g. 'fixed' with 'relative' rips the
+                    // element out of its viewport-anchored spot (common for floating
+                    // widgets like chat launchers) and the "highlight" ends up hiding it.
+                    if (window.getComputedStyle(el).position === 'static') {
+                        el.style.setProperty('position', 'relative');
+                    }
                     el.style.setProperty('z-index', '999999');
                 }"""
                 )

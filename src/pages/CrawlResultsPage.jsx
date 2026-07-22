@@ -210,7 +210,12 @@ function TopViolatingTable({ pages, onRowClick }) {
 // Main page
 // ---------------------------------------------------------------------------
 export default function CrawlResultsPage() {
-  const { crawlId, setCrawlId, navigate } = useApp();
+  const { crawlId, setCrawlId, navigate, setPendingScanHistoryTab } = useApp();
+
+  function goToCrawlHistory() {
+    setPendingScanHistoryTab('crawls');
+    navigate('scan-history');
+  }
 
   const [job, setJob] = useState(null);
   const [pages, setPages] = useState([]);
@@ -446,8 +451,8 @@ export default function CrawlResultsPage() {
             Select a crawl from history or start a new site crawl.
           </p>
           <div className="flex gap-3 justify-center flex-wrap">
-            <button className="btn-secondary" onClick={() => navigate('crawl-history')}>
-              Crawl History
+            <button className="btn-secondary" onClick={goToCrawlHistory}>
+              Scan History
             </button>
             <button className="btn-primary" onClick={() => navigate('new-scan')}>
               New Crawl
@@ -480,7 +485,7 @@ export default function CrawlResultsPage() {
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
           <div className="flex items-center gap-3 flex-wrap">
             <button
-              onClick={() => navigate('crawl-history')}
+              onClick={goToCrawlHistory}
               className="inline-flex items-center gap-1 text-sm text-body dark:text-gray-400 hover:text-teal transition-colors"
             >
               <ChevronLeft size={15} />

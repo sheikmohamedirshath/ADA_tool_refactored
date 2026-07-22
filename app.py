@@ -37,7 +37,7 @@ from services import db
 from backend.services import create_scan_job, get_scan_status
 from backend.services.scan_service import get_queue_service
 from backend.services.auth_utils import generate_verify_token
-from backend.services.email_service import send_verification_email
+from backend.services.email_service import send_verification_email, send_password_reset_email
 from backend.services.crawl_service import (
     create_crawl_job,
     get_crawl_status,
@@ -330,6 +330,61 @@ def api_auth_resend_verification():
     db.set_verify_token(user["id"], verify_token, expiry_utc)
     send_verification_email(user, verify_token, expiry_hours)
     return _GENERIC_OK
+
+
+@app.route("/api/auth/forgot-password", methods=["POST"])
+def api_auth_forgot_password():
+    data  = request.get_json(silent=True) or {}
+    email = (data.get("email") or "").strip().lower()
+    # Always return success to prevent email enumeration
+    _GENERIC_OK = jsonify({"ok": True, "message": "If that address is registered, a password reset link has been sent."})
+
+    if not email or "@" not in email:
+        return _GENERIC_OK
+
+    if not db.is_ready():
+        return _GENERIC_OK
+
+    user = db.get_user_by_email(email)
+    if not user or not user["isActive"]:
+        return _GENERIC_OK
+
+    # Rate-limit: reject if a token was issued less than 60 seconds ago
+    existing_expiry = db.get_reset_token_issued_at(user["id"])
+    if existing_expiry:
+        issued_at_estimate = existing_expiry - timedelta(hours=Config.PASSWORD_RESET_EXPIRE_HOURS)
+        if (datetime.now(timezone.utc) - issued_at_estimate.replace(tzinfo=timezone.utc)).total_seconds() < 60:
+            return _GENERIC_OK
+
+    reset_token  = generate_verify_token()
+    expiry_hours = Config.PASSWORD_RESET_EXPIRE_HOURS
+    expiry_utc   = datetime.now(timezone.utc) + timedelta(hours=expiry_hours)
+    db.set_reset_token(user["id"], reset_token, expiry_utc)
+    send_password_reset_email(user, reset_token, expiry_hours)
+    return _GENERIC_OK
+
+
+@app.route("/api/auth/reset-password", methods=["POST"])
+def api_auth_reset_password():
+    data         = request.get_json(silent=True) or {}
+    token        = (data.get("token") or "").strip()
+    new_password = data.get("newPassword") or ""
+
+    if not token:
+        return jsonify({"ok": False, "error": "token_invalid"}), 400
+    if len(new_password) < 8:
+        return jsonify({"ok": False, "error": "Password must be at least 8 characters"}), 400
+
+    if not db.is_ready():
+        return jsonify({"ok": False, "error": "Database not available"}), 503
+
+    user = db.get_user_by_reset_token(token)
+    if not user:
+        return jsonify({"ok": False, "error": "token_invalid"}), 400
+
+    password_hash = bcrypt.hashpw(new_password.encode(), bcrypt.gensalt()).decode()
+    db.reset_user_password(user["id"], password_hash)
+    return jsonify({"ok": True})
 
 
 @app.route("/api/auth/me", methods=["GET"])
@@ -856,6 +911,8 @@ def api_crawl_schedules_create():
     data = request.get_json(silent=True) or {}
     url = (data.get("url") or "").strip()
     frequency = (data.get("frequency") or "weekly").strip().lower()
+    name = (data.get("name") or "").strip() or None
+    time_of_day = db.parse_time_of_day(data.get("timeOfDay"))
     if not url:
         return jsonify({"ok": False, "error": "Missing 'url'"}), 400
     if frequency not in ("daily", "weekly", "monthly"):
@@ -863,7 +920,7 @@ def api_crawl_schedules_create():
     if not db.is_ready():
         return jsonify({"ok": False, "error": "Database not configured"}), 503
     try:
-        sched = db.create_crawl_schedule(url, frequency)
+        sched = db.create_crawl_schedule(url, frequency, name=name, time_of_day=time_of_day)
         return jsonify({"ok": True, "schedule": sched}), 201
     except Exception as e:
         logging.exception("Failed to create crawl schedule: %s", e)
@@ -879,6 +936,10 @@ def api_crawl_schedules_update(schedule_id):
         kwargs["enabled"] = bool(data["enabled"])
     if "frequency" in data:
         kwargs["frequency"] = str(data["frequency"])
+    if "name" in data:
+        kwargs["name"] = (data.get("name") or "").strip() or None
+    if "timeOfDay" in data:
+        kwargs["time_of_day"] = db.parse_time_of_day(data.get("timeOfDay"))
     if not kwargs:
         return jsonify({"ok": False, "error": "Nothing to update"}), 400
     if not db.is_ready():
@@ -894,6 +955,59 @@ def api_crawl_schedules_delete(schedule_id):
         return jsonify({"ok": False, "error": "Database not configured"}), 503
     ok = db.delete_crawl_schedule(schedule_id)
     return jsonify({"ok": ok})
+
+
+@app.route("/api/crawl-schedules/<int:schedule_id>/run-now", methods=["POST"])
+@require_auth
+def api_crawl_schedules_run_now(schedule_id):
+    """Trigger a schedule's crawl immediately, without disturbing its next automatic run."""
+    if not db.is_ready():
+        return jsonify({"ok": False, "error": "Database not configured"}), 503
+    sched = db.get_crawl_schedule(schedule_id)
+    if not sched:
+        return jsonify({"ok": False, "error": "Schedule not found"}), 404
+    if db.has_active_crawl_for_url(sched["root_url"]):
+        return jsonify({"ok": False, "error": "A crawl is already running for this URL"}), 409
+    try:
+        job = create_crawl_job(sched["root_url"], {})
+        return jsonify({"ok": True, "crawl_id": job["crawl_id"]}), 201
+    except Exception as e:
+        logging.exception("Failed to run schedule now: %s", e)
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@app.route("/api/crawl-schedules/<int:schedule_id>/stop", methods=["POST"])
+@require_auth
+def api_crawl_schedules_stop(schedule_id):
+    """Cancel the in-progress crawl currently running for this schedule, if any."""
+    if not db.is_ready():
+        return jsonify({"ok": False, "error": "Database not configured"}), 503
+    sched = db.get_crawl_schedule(schedule_id)
+    if not sched:
+        return jsonify({"ok": False, "error": "Schedule not found"}), 404
+    crawl_id = db.get_active_crawl_id_for_url(sched["root_url"])
+    if not crawl_id:
+        return jsonify({"ok": False, "error": "No active run for this schedule"}), 404
+    try:
+        cancel_crawl_job(crawl_id)
+        return jsonify({"ok": True, "crawl_id": crawl_id, "status": "cancelled"})
+    except Exception as e:
+        logging.exception("Failed to stop schedule run: %s", e)
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@app.route("/api/crawl-schedules/<int:schedule_id>/runs", methods=["GET"])
+@require_auth
+def api_crawl_schedules_runs(schedule_id):
+    """Return the most recent crawl runs for this schedule."""
+    if not db.is_ready():
+        return jsonify({"ok": True, "available": False, "items": []})
+    sched = db.get_crawl_schedule(schedule_id)
+    if not sched:
+        return jsonify({"ok": False, "error": "Schedule not found"}), 404
+    limit = request.args.get("limit", type=int) or 5
+    items = db.get_schedule_runs(sched["root_url"], limit=limit)
+    return jsonify({"ok": True, "items": items})
 
 
 # ── Phase 3: AI Summary (Feature 2) ───────────────────────────────────────────
@@ -956,42 +1070,6 @@ def api_alerts_unread_count():
     if not db.is_ready():
         return jsonify({"ok": True, "count": 0})
     return jsonify({"ok": True, "count": db.get_unacknowledged_alert_count()})
-
-
-# ── Phase 3: Digest (Feature 4) ────────────────────────────────────────────────
-
-@app.route("/api/digests", methods=["GET"])
-@require_auth
-def api_digests_list():
-    if not db.is_ready():
-        return jsonify({"ok": True, "available": False, "items": [],
-                        "message": "Database not configured"}), 200
-    try:
-        limit = request.args.get("limit", type=int) or 12
-        items = db.get_digests(limit=limit)
-        return jsonify({"ok": True, "items": items})
-    except Exception as e:
-        logging.exception("Failed to list digests: %s", e)
-        return jsonify({"ok": False, "error": str(e)}), 500
-
-
-@app.route("/api/digests/trigger", methods=["POST"])
-@require_auth
-def api_digests_trigger():
-    """Manually trigger digest generation (for testing / on-demand use)."""
-    if not db.is_ready():
-        return jsonify({"ok": False, "error": "Database not configured"}), 503
-    try:
-        from backend.services.digest_service import generate_weekly_digest
-        data = request.get_json(silent=True) or {}
-        send = bool(data.get("send_email", True))
-        digest = generate_weekly_digest(send_email=send)
-        if digest is None:
-            return jsonify({"ok": False, "error": "No crawl data found for the past 7 days"})
-        return jsonify({"ok": True, "digest": digest})
-    except Exception as e:
-        logging.exception("Digest trigger failed: %s", e)
-        return jsonify({"ok": False, "error": str(e)}), 500
 
 
 # ── Phase 3: Page Trends (Feature 6) ──────────────────────────────────────────

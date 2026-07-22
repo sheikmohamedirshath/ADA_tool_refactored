@@ -188,7 +188,6 @@ function AddSlackChannelModal({ integrationId, onClose, onAdded }) {
             >
               <option value="general">General Reports</option>
               <option value="alerts">Regression Alerts</option>
-              <option value="digest">Weekly Digest</option>
             </select>
           </div>
           <p className="text-xs text-body dark:text-gray-500">

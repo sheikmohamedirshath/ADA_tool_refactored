@@ -46,8 +46,6 @@ class Config:
     ALERT_SCORE_DROP_THRESHOLD = int(os.getenv("ALERT_SCORE_DROP_THRESHOLD", "5"))
     ALERT_VIOLATION_INCREASE_THRESHOLD = int(os.getenv("ALERT_VIOLATION_INCREASE_THRESHOLD", "10"))
     ALERT_EMAIL = os.getenv("ALERT_EMAIL", "")  # defaults to notify_email of the job
-    # Phase 3 — Digest (Feature 4)
-    DIGEST_EMAIL = os.getenv("DIGEST_EMAIL", os.getenv("SMTP_FROM", ""))
     # Phase 3 — Scheduler (Feature 1)
     SCHEDULER_ENABLED = os.getenv("SCHEDULER_ENABLED", "true").lower() in ("1", "true", "yes")
     SCHEDULER_INTERVAL_SECONDS = int(os.getenv("SCHEDULER_INTERVAL_SECONDS", "60"))
@@ -60,6 +58,7 @@ class Config:
         )
     JWT_EXPIRE_HOURS = int(os.getenv("JWT_EXPIRE_HOURS", "24"))
     EMAIL_VERIFY_EXPIRE_HOURS = int(os.getenv("EMAIL_VERIFY_EXPIRE_HOURS", "24"))
+    PASSWORD_RESET_EXPIRE_HOURS = int(os.getenv("PASSWORD_RESET_EXPIRE_HOURS", "1"))
     GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "")
     # Slack integration (OAuth bot token flow)
     SLACK_CLIENT_ID     = os.getenv("SLACK_CLIENT_ID", "")

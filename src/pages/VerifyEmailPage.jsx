@@ -4,7 +4,7 @@ import BrandLogo from '../components/ui/BrandLogo';
 import { useApp } from '../context/AppContext';
 
 export default function VerifyEmailPage({ dark, toggleDark }) {
-  const { navigate, login } = useApp();
+  const { navigate, login, postAuthRedirect, setPostAuthRedirect } = useApp();
 
   const [status, setStatus]     = useState('verifying'); // 'verifying' | 'success' | 'expired' | 'invalid'
   const [resendEmail, setResendEmail] = useState('');
@@ -26,7 +26,9 @@ export default function VerifyEmailPage({ dark, toggleDark }) {
         if (data.ok) {
           login(data.user, data.token);
           setStatus('success');
-          setTimeout(() => navigate('dashboard'), 1500);
+          const target = postAuthRedirect || 'dashboard';
+          setPostAuthRedirect(null);
+          setTimeout(() => navigate(target), 1500);
         } else if (data.error === 'token_invalid') {
           setStatus('invalid');
         } else {

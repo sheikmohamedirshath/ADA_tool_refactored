@@ -5,6 +5,7 @@ import {
   getRuleEffort, getRuleImpactedUsers, getRuleCodePair, getRuleValidationSteps,
 } from '../../config/axeFixGuidance';
 import { nsWcagTagToMeta, truncateHtml, P4_EFFORT } from './scanUtils';
+import ScreenshotModal from './ScreenshotModal';
 
 const copyBtnBase = 'border rounded font-semibold whitespace-nowrap flex-shrink-0 cursor-pointer transition-colors';
 const copyBtnIdle = 'border-gray-200 dark:border-white/[0.08] bg-white dark:bg-charcoal text-body dark:text-gray-400 hover:border-teal hover:text-ink dark:hover:text-white';
@@ -197,6 +198,7 @@ function RecommendedFixCard({ violation, wcagMeta }) {
 export default function ViolationRow({ violation }) {
   const [expanded, setExpanded] = useState(false);
   const [copiedNode, setCopiedNode] = useState(null);
+  const [screenshotOpen, setScreenshotOpen] = useState(false);
 
   const impact = (violation.impact ?? 'minor').toLowerCase();
   const impactConfig = {
@@ -208,6 +210,8 @@ export default function ViolationRow({ violation }) {
 
   const wcag = nsWcagTagToMeta(violation.tags);
   const nodes = violation.nodes ?? [];
+  const hasScreenshot = typeof violation.screenshot === 'string' && violation.screenshot.trim().length > 0;
+  const screenshotType = (typeof violation.screenshotType === 'string' && violation.screenshotType.trim()) || 'image/jpeg';
 
   const copyNode = (text, ni) => {
     if (!navigator.clipboard) return;
@@ -264,6 +268,16 @@ export default function ViolationRow({ violation }) {
       {expanded && (
         <div className="border-t border-gray-100 dark:border-white/[0.05] bg-gray-50/50 dark:bg-white/[0.02] px-4 pb-5 pt-4 space-y-4">
 
+          {hasScreenshot && (
+            <button
+              type="button"
+              onClick={(e) => { e.stopPropagation(); setScreenshotOpen(true); }}
+              className="px-3.5 py-2 bg-coral/[0.12] text-[#b91c1c] border border-coral/30 rounded-lg text-[13px] font-medium cursor-pointer hover:bg-coral/[0.18] transition-colors"
+            >
+              View screenshot
+            </button>
+          )}
+
           <RecommendedFixCard violation={violation} wcagMeta={wcag} />
 
           {/* Affected elements */}
@@ -302,6 +316,14 @@ export default function ViolationRow({ violation }) {
           )}
 
         </div>
+      )}
+
+      {screenshotOpen && hasScreenshot && (
+        <ScreenshotModal
+          src={`data:${screenshotType};base64,${violation.screenshot.trim()}`}
+          title={`${violation.id || 'Violation'} – screenshot`}
+          onClose={() => setScreenshotOpen(false)}
+        />
       )}
     </div>
   );

@@ -96,11 +96,16 @@ def build_db_mock() -> MagicMock:
     m.create_crawl_schedule.return_value     = {"id": 1, "url": "https://example.com", "frequency": "weekly"}
     m.update_crawl_schedule.return_value     = True
     m.delete_crawl_schedule.return_value     = True
+    m.get_crawl_schedule.return_value        = {"id": 1, "root_url": "https://example.com", "frequency": "weekly",
+                                                 "enabled": True, "name": None, "time_of_day": None}
+    m.has_active_crawl_for_url.return_value  = False
+    m.get_active_crawl_id_for_url.return_value = None
+    m.get_schedule_runs.return_value         = []
+    m.parse_time_of_day.side_effect          = lambda v: v or None
     m.get_crawl_ai_summary.return_value      = None
     m.get_alerts.return_value                = []
     m.get_unacknowledged_alert_count.return_value = 0
     m.acknowledge_alert.return_value         = True
-    m.get_digests.return_value               = []
     m.get_page_trends.return_value           = {"has_comparison": False}
     m.get_violation_intel.return_value       = {
         "severity_breakdown": {"critical": 0, "serious": 0, "moderate": 0, "minor": 0},
